@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 2Captcha support (paid products — captcha solving, Scraping Browser API, proxies, fingerprints)
+    url: https://2captcha.com/support
+    about: For questions about the 2Captcha products this scraper integrates with, not the scraper's own code.
+  - name: 2Captcha proxies
+    url: https://2captcha.com/proxy
+    about: Questions about LIDL_PROXY / the residential proxy product specifically.
+  - name: Security issue
+    url: https://github.com/2scraper/lidl-scraper/security/advisories/new
+    about: Please report vulnerabilities privately — see SECURITY.md — rather than a public issue.

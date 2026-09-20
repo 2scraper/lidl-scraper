@@ -1,0 +1,139 @@
+name: canary
+
+on:
+  schedule:
+    - cron: "37 6 * * *"   # once daily; avoid :00 so it doesn't pile up with everyone else's
+  workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
+
+jobs:
+  # Unlike skyscanner-scraper's canary (robots.txt-restricted, so its own
+  # build environment could never even read the site) lidl.com's robots.txt
+  # is wide open and its homepage fetched cleanly — but every deeper URL
+  # this repo's own build environment tried still 404'd to a plain fetch
+  # (see lidl_parser.py's module docstring). So this job is STILL this
+  # codebase's actual first live test against a real rendered page: it
+  # runs the LOCAL-FIRST default with no secrets at all, on a schedule. A
+  # failure here is informative, not necessarily a regression — see the
+  # assertion step below for exactly which outcomes count as a real bug
+  # vs. "the selectors/pagination model need updating for the real page".
+  canary-local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install -r requirements-playwright.txt
+          playwright install --with-deps chromium
+
+      - name: Run the local-first default against a real search term
+        run: |
+          set +e
+          python3 playwright_scraper.py \
+            --query "whole milk" --max-results 10 --format json --out canary_out.json --dump-html
+          echo "exit_code=$?" >> "$GITHUB_ENV"
+
+      - name: Interpret the exit code — only a crash/bad-usage is a real CI failure
+        run: |
+          python3 -c "
+          import json, os, sys
+
+          code = int(os.environ['exit_code'])
+          print(f'playwright_scraper.py exited {code}')
+
+          # EXIT_OK=0 / EXIT_PARTIAL=6: a real, trustworthy run — report it.
+          if os.path.exists('canary_out.json.meta.json'):
+              meta = json.load(open('canary_out.json.meta.json'))
+              print(json.dumps(meta, indent=2))
+              print(f\"canary: got {meta['product_count']} products via engine={meta['engine']}\")
+
+          # EXIT_BLOCKED=3 / EXIT_ZERO_PRODUCTS=4 / EXIT_REMOTE_API_ERROR=5:
+          # finish_run() writes NO sidecar for any of these by design (a
+          # stale 'failed' sidecar sitting beside a previous good output
+          # must never contradict it). Since lidl_parser.py's selectors,
+          # embedded-JSON shape, and even the scroll-pagination model are
+          # all best-effort guesses never checked against a live response
+          # (see its module docstring), a 3/4/5 here most likely means
+          # 'the real markup/pagination doesn't match the guess yet' —
+          # worth investigating, not a broken build. Report it as a
+          # notice, not a failure.
+          elif code in (3, 4, 5):
+              print(f'::notice::exit {code} — no sidecar written (blocked/empty/remote-api-error, '
+                    f'by finish_run design). lidl_parser.py selectors/pagination model may need '
+                    f'updating for the current lidl.com markup — inspect canary_out_debug.html '
+                    f'from this run\\'s uploaded artifact.')
+
+          # EXIT_CRASH=1 / EXIT_BAD_USAGE=2: an unhandled exception or a
+          # usage bug in THIS repo's own code, independent of what the
+          # live site returned — this is a real failure.
+          elif code in (1, 2):
+              print(f'::error::exit {code} is a crash/bad-usage outcome — a real bug in this '
+                    f'repo\\'s own code, not a live-site surprise. See the previous step\\'s log.')
+              sys.exit(1)
+
+          else:
+              print(f'::error::unrecognised exit code {code}')
+              sys.exit(1)
+          "
+
+      - name: Upload artifacts (output + debug HTML) on every run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-local-${{ github.run_id }}
+          path: |
+            canary_out.json
+            canary_out.json.meta.json
+            canary_out_debug.html
+          retention-days: 14
+
+  # Opt-in, mirroring the rest of the family's pattern: exercises the
+  # --cdp-endpoint (2Captcha Scraping Browser API) path when a repo secret
+  # is configured. Skips cleanly — not red — when it isn't.
+  canary-cdp:
+    runs-on: ubuntu-latest
+    env:
+      HAS_CDP: ${{ secrets.LIDL_CDP_ENDPOINT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip — no LIDL_CDP_ENDPOINT secret configured
+        if: env.HAS_CDP != 'true'
+        run: |
+          echo "::notice::Skipping the Scraping Browser API run: no LIDL_CDP_ENDPOINT \
+          secret is set. This is optional — canary-local above already exercises this repo's \
+          local-first default with no secrets at all. Set LIDL_CDP_ENDPOINT (and \
+          TWOCAPTCHA_KEY) as repo secrets to also turn this job on. This is a SKIP, not a pass \
+          or a fail."
+
+      - uses: actions/setup-python@v5
+        if: env.HAS_CDP == 'true'
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-playwright.txt
+        if: env.HAS_CDP == 'true'
+
+      # Both secrets go through the ENVIRONMENT, never a command-line flag
+      # (credentials never reach argv). env_config.py already reads
+      # LIDL_CDP_ENDPOINT/TWOCAPTCHA_KEY unconditionally, so this is
+      # correct with or without either secret set.
+      - name: Run over the Scraping Browser API
+        if: env.HAS_CDP == 'true'
+        env:
+          LIDL_CDP_ENDPOINT: ${{ secrets.LIDL_CDP_ENDPOINT }}
+          TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}
+        run: |
+          python3 playwright_scraper.py \
+            --query "whole milk" --max-results 10 --format json --out canary_cdp_out.json --dump-html
+
+      - name: Upload artifacts on every non-skipped run
+        if: always() && env.HAS_CDP == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-cdp-${{ github.run_id }}
+          path: |
+            canary_cdp_out.json
+            canary_cdp_out.json.meta.json
+            canary_cdp_out_debug.html
+          retention-days: 14

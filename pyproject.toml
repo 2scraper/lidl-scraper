@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lidl-scraper"
+version = "0.1.0"
+description = "lidl.com grocery product scraper (Playwright, Selenium, Puppeteer, or 2Captcha's Scraping Browser API via CDP) — local-first, JSON-LD + embedded-JSON + DOM parsing, captcha solving, proxies, fingerprints"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "beautifulsoup4>=4.12",
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+playwright = ["playwright>=1.45"]
+selenium = ["selenium>=4.20"]
+puppeteer = ["pyppeteer>=1.0.2"]
+
+[project.urls]
+Homepage = "https://2captcha.com"
+Repository = "https://github.com/2scraper/lidl-scraper"
+
+[tool.setuptools]
+# A flat collection of standalone scripts, not a package — setuptools
+# cannot guess among this many top-level modules, so they're listed
+# explicitly. Keep this in sync with requirements*.txt by hand; CI only
+# installs requirements.txt directly, so drift here goes unnoticed there.
+py-modules = [
+    "env_config",
+    "proxy_pool",
+    "output_writer",
+    "captcha_solver",
+    "fingerprint_client",
+    "scraper_api_client",
+    "diff_runs",
+    "lidl_parser",
+    "playwright_scraper",
+    "selenium_scraper",
+    "puppeteer_scraper",
+    "smoke_test",
+]

@@ -1,0 +1,9 @@
+-r requirements.txt
+# Pin a floor explicitly: with playwright and selenium's requirements also
+# on the resolver's plate, pip can silently resolve this down to a stub
+# release instead of a real pyppeteer build. Install this file in its OWN
+# virtualenv (see README "Installing" / CI's engine-smoke job) — pyppeteer's
+# pyee pin and playwright's are mutually unsatisfiable, and pyppeteer
+# collides with selenium's urllib3 pin too (same issue stockx-scraper's
+# requirements-puppeteer.txt documents).
+pyppeteer>=1.0.2

@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>2scraper — Lidl Scraper</title>
+<style>
+  :root{
+    --bg:#0F1216;
+    --panel:#181B20;
+    --panel-2:#141619;
+    --line:#2A2D34;
+    --text:#D7D9DE;
+    --muted:#8B8F99;
+    --ontime:#2ECC71;
+    --delay:#F5B400;
+    --accent:#3FA9F5;
+    --mono:'IBM Plex Mono','Space Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans:'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); line-height:1.55; }
+  a{ color:var(--accent); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 24px; }
+
+  .board{ background:var(--panel-2); border-bottom:1px solid var(--line); overflow:hidden; white-space:nowrap; padding:8px 0; }
+  .board-track{ display:inline-block; font-family:var(--mono); font-size:12.5px; animation:scroll-left 34s linear infinite; }
+  .board-track span{ margin-right:36px; }
+  .ontime{ color:var(--ontime); } .delay{ color:var(--delay); }
+  @keyframes scroll-left{ from{ transform:translateX(0);} to{ transform:translateX(-50%);} }
+  @media (prefers-reduced-motion: reduce){ .board-track{ animation:none; } }
+
+  header.topbar{ border-bottom:1px solid var(--line); }
+  .topbar-inner{ display:flex; align-items:center; justify-content:space-between; padding:16px 24px; max-width:1040px; margin:0 auto; }
+  .logo{ font-family:var(--mono); font-weight:700; font-size:14px; letter-spacing:0.05em; }
+  .logo span{ color:var(--muted); }
+  nav a{ color:var(--muted); font-family:var(--mono); font-size:12.5px; margin-left:20px; }
+  nav a:hover{ color:var(--accent); }
+
+  .hero{ padding:64px 0 30px; text-align:center; }
+  .eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:0.18em; color:var(--muted); text-transform:uppercase; margin-bottom:16px; }
+  h1{ font-family:var(--sans); font-weight:800; font-size:clamp(28px,4.6vw,46px); line-height:1.2; margin:0 0 18px; color:#fff; }
+  h1 .accent{ color:var(--accent); }
+  .hero p.sub{ max-width:620px; margin:0 auto 30px; font-size:16.5px; color:var(--muted); }
+
+  .signature{ display:flex; justify-content:center; margin-bottom:36px; }
+  .sig-svg{ width:100%; max-width:640px; height:130px; }
+  .node-box{ fill:var(--panel); stroke:var(--line); stroke-width:1.5; }
+  .node-label{ font-family:var(--mono); font-size:11px; fill:var(--text); }
+  .node-sub{ font-family:var(--mono); font-size:9px; fill:var(--muted); }
+  .flow-line{ stroke:var(--line); stroke-width:1.5; fill:none; stroke-dasharray:5 5; }
+  .flow-dot{ fill:var(--accent); filter:drop-shadow(0 0 4px var(--accent)); }
+  .badge-a{ fill:var(--ontime); }
+  .badge-b{ fill:var(--delay); }
+  @keyframes travel1{ 0%{ offset-distance:0%; opacity:0; } 5%{ opacity:1; } 45%{ opacity:1; } 50%{ offset-distance:50%; opacity:0; } 100%{ offset-distance:50%; opacity:0; } }
+  @keyframes travel2{ 0%,50%{ offset-distance:50%; opacity:0; } 55%{ opacity:1; } 95%{ opacity:1; } 100%{ offset-distance:100%; opacity:0; } }
+  .dot-a{ offset-path:path('M 40 65 H 600'); animation: travel1 3.2s linear infinite; }
+  .dot-b{ offset-path:path('M 40 65 H 600'); animation: travel2 3.2s linear infinite; }
+  @media (prefers-reduced-motion: reduce){ .dot-a, .dot-b{ animation:none; opacity:0; } }
+
+  .cta-row{ display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .btn{ font-family:var(--mono); font-size:13px; letter-spacing:0.03em; padding:13px 22px; border-radius:4px; border:1px solid var(--line); display:inline-flex; align-items:center; gap:8px; }
+  .btn-primary{ background:var(--accent); border-color:var(--accent); color:#08131C; font-weight:700; }
+  .btn-primary:hover{ text-decoration:none; filter:brightness(1.08); }
+  .btn-ghost{ color:var(--text); }
+  .btn-ghost:hover{ text-decoration:none; border-color:var(--accent); color:var(--accent); }
+
+  section{ padding:52px 0; }
+  .section-eyebrow{ font-family:var(--mono); font-size:12px; letter-spacing:0.16em; color:var(--accent); text-transform:uppercase; margin-bottom:10px; }
+  h2{ font-family:var(--sans); font-weight:700; font-size:26px; color:#fff; margin:0 0 26px; }
+
+  .callout{ background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:4px; padding:16px 18px; font-size:14.5px; color:var(--text); margin-bottom:30px; }
+  .callout strong{ color:#fff; }
+  .callout.honest{ border-left-color:var(--delay); }
+
+  table.board-table{ width:100%; border-collapse:collapse; font-family:var(--mono); font-size:14px; }
+  table.board-table thead th{ text-align:left; color:var(--muted); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; padding:10px 14px; border-bottom:1px solid var(--line); }
+  table.board-table tbody td{ padding:15px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.board-table tbody tr:hover{ background:rgba(63,169,245,0.05); }
+  .pill{ display:inline-block; font-size:11px; padding:3px 9px; border-radius:3px; letter-spacing:0.05em; font-weight:700; }
+  .pill.buy{ background:rgba(46,204,113,0.15); color:var(--ontime); border:1px solid rgba(46,204,113,0.4); }
+  .pill.watch{ background:rgba(63,169,245,0.15); color:var(--accent); border:1px solid rgba(63,169,245,0.4); }
+
+  .addon-grid{ display:grid; grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:16px; }
+  .addon{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:20px; }
+  .addon h3{ font-family:var(--mono); font-size:13px; color:#fff; margin:0 0 8px; }
+  .addon p{ font-size:14px; color:var(--muted); margin:0 0 10px; }
+
+  .codebox{ background:#0A0B0D; border:1px solid var(--line); border-radius:6px; padding:20px 22px; font-family:var(--mono); font-size:13px; color:var(--ontime); overflow-x:auto; line-height:1.7; }
+  .codebox .cmt{ color:var(--muted); }
+  .codebox .cmd{ color:var(--text); }
+
+  footer{ border-top:1px solid var(--line); padding:34px 0; color:var(--muted); font-size:13px; font-family:var(--mono); }
+  footer a{ color:var(--muted); }
+  footer a:hover{ color:var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="board">
+  <div class="board-track">
+    <span class="ontime">✓ Whole Milk, 1 Gal $3.49 IN STOCK</span>
+    <span class="delay">⏱ Sourdough Bread $2.99 WEEKLY DEAL</span>
+    <span class="ontime">✓ Organic Avocados 4ct $3.29 IN STOCK</span>
+    <span class="delay">⏱ Oat Milk $4.29 WEEKLY DEAL</span>
+    <span class="ontime">✓ Almond Milk $3.99 IN STOCK</span>
+    <span class="ontime">✓ Whole Milk, 1 Gal $3.49 IN STOCK</span>
+    <span class="delay">⏱ Sourdough Bread $2.99 WEEKLY DEAL</span>
+    <span class="ontime">✓ Organic Avocados 4ct $3.29 IN STOCK</span>
+    <span class="delay">⏱ Oat Milk $4.29 WEEKLY DEAL</span>
+    <span class="ontime">✓ Almond Milk $3.99 IN STOCK</span>
+  </div>
+</div>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="logo">2SCRAPER<span> / lidl.com</span></div>
+    <nav>
+      <a href="#engines">Engines</a>
+      <a href="#addons">Infrastructure</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/2scraper/lidl-scraper">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="hero">
+    <div class="eyebrow">Open-source grocery product data</div>
+    <h1>Runs on <span class="accent">your own infrastructure</span>.<br>2Captcha's, when you actually need it.</h1>
+    <p class="sub">
+      Open-source scraper for lidl.com (Lidl US) product search and weekly
+      deals. Three engines, one documented output schema — price, unit
+      price, discount, brand, and which store/zip a price reflects. Point
+      it at 2Captcha's Scraping Browser API over CDP when you need proxies,
+      fingerprints, and captcha solving bundled — not by default.
+    </p>
+
+    <div class="signature">
+      <svg class="sig-svg" viewBox="0 0 640 130" xmlns="http://www.w3.org/2000/svg">
+        <path class="flow-line" d="M 40 65 H 600" />
+        <circle class="flow-dot dot-a" r="4"/>
+        <circle class="flow-dot dot-b" r="4"/>
+
+        <rect class="node-box" x="10" y="46" width="140" height="40" rx="6"/>
+        <text class="node-label" x="80" y="63" text-anchor="middle">YOUR SCRIPT</text>
+        <text class="node-sub" x="80" y="77" text-anchor="middle">Playwright / Selenium / pyppeteer</text>
+
+        <rect class="node-box" x="245" y="12" width="150" height="40" rx="6"/>
+        <text class="node-label" x="320" y="29" text-anchor="middle">--cdp-endpoint</text>
+        <text class="node-sub" x="320" y="43" text-anchor="middle">optional</text>
+        <circle class="badge-a" cx="250" cy="17" r="3"/>
+
+        <rect class="node-box" x="245" y="78" width="150" height="40" rx="6"/>
+        <text class="node-label" x="320" y="95" text-anchor="middle">SCRAPING BROWSER API</text>
+        <text class="node-sub" x="320" y="109" text-anchor="middle">proxy · fingerprint · captcha</text>
+        <circle class="badge-b" cx="250" cy="83" r="3"/>
+
+        <rect class="node-box" x="490" y="46" width="140" height="40" rx="6"/>
+        <text class="node-label" x="560" y="63" text-anchor="middle">LIDL.COM</text>
+        <text class="node-sub" x="560" y="77" text-anchor="middle">product search &amp; deals</text>
+      </svg>
+    </div>
+
+    <div class="cta-row">
+      <a class="btn btn-primary" href="https://github.com/2scraper/lidl-scraper">View on GitHub</a>
+      <a class="btn btn-ghost" href="#start">Read the docs</a>
+    </div>
+  </div>
+
+  <section>
+    <div class="callout">
+      <strong>Before you scrape:</strong> check Lidl's own site and the Lidl Plus app for anything a formal
+      integration or public feed already covers your use case. This scraper is for everything outside that.
+    </div>
+    <div class="callout honest">
+      <strong>Read this before you rely on it:</strong> this project's own build tooling could reach
+      <code>lidl.com</code>'s <code>robots.txt</code> (wide open) and homepage cleanly, but every deeper page it
+      tried came back 404 to a plain, non-browser fetch — most likely because those routes are client-rendered,
+      not active blocking. The URL scheme is confirmed real; the exact selectors, embedded-data shape, and
+      pagination model are documented best-effort guesses pending a real, browser-rendered capture. The
+      architecture (exit codes, output schema, dedupe, all three engines) is real and tested. Full details in the
+      <a href="https://github.com/2scraper/lidl-scraper#readme">README</a> — read it first.
+    </div>
+  </section>
+
+  <section id="engines">
+    <div class="section-eyebrow">The deals board</div>
+    <h2>One file per engine</h2>
+    <table class="board-table">
+      <thead>
+        <tr><th>Engine</th><th>Runtime</th><th>Best for</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Playwright</td>
+          <td>Python, single file</td>
+          <td>Primary engine, local-first — full Scraping Browser API support incl. captcha auto-solve</td>
+          <td><span class="pill buy">RECOMMENDED</span></td>
+        </tr>
+        <tr>
+          <td>Puppeteer</td>
+          <td>Python (pyppeteer), single file</td>
+          <td>Same CDP capabilities as Playwright — pyppeteer itself is unmaintained upstream</td>
+          <td><span class="pill watch">PARITY</span></td>
+        </tr>
+        <tr>
+          <td>Selenium</td>
+          <td>Python, single file</td>
+          <td>Stack-compatibility only — cannot authenticate a remote CDP session, documented limitation</td>
+          <td><span class="pill watch">PARITY</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section id="addons">
+    <div class="section-eyebrow">Risk management</div>
+    <h2>Infrastructure, when you want it</h2>
+    <div class="addon-grid">
+      <div class="addon">
+        <h3>CAPTCHA SOLVING</h3>
+        <p>Broad detection, solves only when a page is actually gated — never just because a widget is present. Over <code>--cdp-endpoint</code>, wired into <code>Captcha.setAutoSolve</code>: detect, submit, solve, inject, all inside 2Captcha's own session.</p>
+      </div>
+      <div class="addon">
+        <h3>SCRAPING BROWSER API</h3>
+        <p>A remote browser session over CDP with its own proxy, fingerprint, and captcha auto-solve already bundled — one <code>--cdp-endpoint</code> flag.</p>
+      </div>
+      <div class="addon">
+        <h3>FINGERPRINTS</h3>
+        <p>Optional: pin a specific OS/browser/country fingerprint via the 2Captcha Fingerprint API for a locally-launched browser.</p>
+      </div>
+      <div class="addon">
+        <h3>PROXIES</h3>
+        <p>2captcha.com/proxy credentials in <code>.env</code> — rotated automatically, with per-exit failure tracking and masked logs.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="section-eyebrow">Fill the cart</div>
+    <h2>Get started</h2>
+    <div class="codebox">
+<span class="cmt"># clone, install, configure</span><br>
+<span class="cmd">git clone https://github.com/2scraper/lidl-scraper.git</span><br>
+<span class="cmd">cd lidl-scraper && pip install -r requirements-playwright.txt && playwright install chromium</span><br>
+<span class="cmd">cp .env.example .env</span> <span class="cmt"># optional — not required for a local-first run</span><br><br>
+<span class="cmt"># a product search</span><br>
+<span class="cmd">python3 playwright_scraper.py --query "whole milk" --format json --out lidl_results.json</span><br><br>
+<span class="cmt"># or a full lidl.com URL directly</span><br>
+<span class="cmd">python3 playwright_scraper.py --url "https://www.lidl.com/search/products/milk"</span>
+    </div>
+    <p style="color:var(--muted); font-size:14.5px; margin:22px 0 0;">
+      Built for grocery-price researchers, deal-tracking tools, and anyone who wants Lidl US search
+      results in a script rather than a browser tab.
+    </p>
+  </section>
+
+  <section>
+    <div class="callout">
+      <strong>Need it running at scale, with proxies, fingerprints, and captcha solving already configured?</strong>
+      <a href="https://2captcha.com/contact">Talk to us →</a> · Proxies by
+      <a href="https://2captcha.com/proxy">2captcha.com/proxy</a> · Scraping Browser API &amp; captcha solving by
+      <a href="https://2captcha.com">2captcha.com</a>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+    <span>2SCRAPER — open-source, MIT license</span>
+    <span>
+      <a href="https://github.com/2scraper/lidl-scraper">GitHub</a> ·
+      <a href="https://2captcha.com">2captcha.com</a> ·
+      <a href="https://2captcha.com/proxy">2captcha.com/proxy</a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>

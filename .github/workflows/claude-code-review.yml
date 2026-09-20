@@ -1,0 +1,47 @@
+name: Claude Code Review
+
+# Automated first-pass review on every PR. Extra to the family core
+# (CLAUDE.md §11) — same token-guard and stable-channel reasoning as
+# claude.yml, see the comments there.
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check token is configured
+        id: token_check
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: echo "has_token=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Install Claude Code CLI (stable channel)
+        if: steps.token_check.outputs.has_token == 'true'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
+          echo "CLAUDE_CODE_PATH=$HOME/.local/bin/claude" >> "$GITHUB_ENV"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.token_check.outputs.has_token == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: ${{ env.CLAUDE_CODE_PATH }}
+          prompt: |
+            Review this PR against CLAUDE.md's invariants (the ones in
+            ~/2scraper/CLAUDE.md if this checkout carries a copy, section 8
+            in particular) — do not re-litigate them, explain instead of
+            complying if a change seems to conflict with one. Flag banned
+            wording (section 12), output-contract drift (section 9), and
+            anything that touches pagination or captcha handling without
+            the corresponding smoke_test.py coverage.

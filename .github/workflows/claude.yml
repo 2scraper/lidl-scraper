@@ -1,0 +1,65 @@
+name: Claude
+
+# Mention @claude in an issue, PR review, or PR review comment to have
+# Claude Code act on it. Extra to the family core (CLAUDE.md §11) — the
+# offline/canary split in tests.yml/canary.yml is what actually gates
+# merges; this is a convenience on top of it.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # `secrets` isn't visible in a job-level `if`, so the token is
+      # checked here through step `env` instead — a repo copied without
+      # CLAUDE_CODE_OAUTH_TOKEN gets a clean skip on the steps below
+      # rather than the action's own environment validation FAILING the
+      # job and leaving a permanently red check on every PR (CLAUDE.md
+      # §11 — a check that's always red teaches everyone to ignore checks).
+      - name: Check token is configured
+        id: token_check
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: echo "has_token=$HAS_TOKEN" >> "$GITHUB_OUTPUT"
+
+      # Pin the CLI to the `stable` channel, not `latest` — on 2026-09-08
+      # `latest` (2.1.265) installed no binary where the action looks, so
+      # every run died with "Claude Code native binary not found". Install
+      # it ourselves and pass the explicit path; ${{ env.HOME }} is empty
+      # in the workflow env context, so export it through GITHUB_ENV
+      # rather than relying on the action's own fallback (which silently
+      # reaches for `latest` again).
+      - name: Install Claude Code CLI (stable channel)
+        if: steps.token_check.outputs.has_token == 'true'
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash -s stable
+          echo "CLAUDE_CODE_PATH=$HOME/.local/bin/claude" >> "$GITHUB_ENV"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.token_check.outputs.has_token == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: ${{ env.CLAUDE_CODE_PATH }}

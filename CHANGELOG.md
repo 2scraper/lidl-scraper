@@ -1,0 +1,69 @@
+# Changelog
+
+All notable changes to this project are documented here. Format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows
+[SemVer](https://semver.org/) as closely as a CLI toolkit can manage. A patch
+release means "fixes", not that every flag and default is frozen — a
+behaviour-changing default gets called out explicitly in its entry below
+rather than being a silent violation of that.
+
+## [Unreleased]
+
+### Added — initial build, third member of the 2scraper family
+- First build of `lidl-scraper`, following `stockx-scraper` and
+  `skyscanner-scraper`'s established shape: three engine scripts
+  (`playwright_scraper.py` primary, `selenium_scraper.py`,
+  `puppeteer_scraper.py`), the same family-shared, no-site-knowledge
+  modules ported near-verbatim from `skyscanner-scraper` (`output_writer.py`,
+  `proxy_pool.py`, `captcha_solver.py`, `fingerprint_client.py`,
+  `scraper_api_client.py`, `diff_runs.py`, `env_config.py` — per CLAUDE.md
+  §7), and `lidl_parser.py` as this repo's own site knowledge.
+- `Product` schema extended with grocery-specific fields not present in
+  either sibling repo: `unit_price`, `unit_size`, `original_price`,
+  `discount_pct`, `is_weekly_deal`, `deal_valid_from`, `deal_valid_until`,
+  `store_id`, `zip_code` — US grocery pricing is commonly store/region-
+  scoped and frequently on a time-limited "weekly deal," neither of which
+  either flight itineraries or marketplace listings needed to represent.
+- `lidl_parser.py`'s embedded-data extraction tries schema.org
+  `application/ld+json` `Product`/`ItemList` markup FIRST, ahead of the
+  `__NEXT_DATA__` heuristic both sibling repos use as their primary path —
+  structured Product data is a standard, documented e-commerce SEO
+  practice, and a more likely place for lidl.com to expose clean data than
+  a framework guess this repo has no public confirmation of (unlike
+  skyscanner.com, which is publicly known to be Next.js-based).
+- `--zip`/`--store-id` flags, threaded through to every output row, for a
+  site where the same search can legitimately return different prices by
+  region — a dimension neither sibling repo's schema needed to model.
+
+### Honesty note — read before trusting anything above
+- **robots.txt on lidl.com is wide open** (`Disallow:` empty) — unlike
+  skyscanner-scraper, nothing here was blocked from being fetched by
+  policy. But every URL deeper than the homepage that this session tried
+  returned a plain HTTP 404 to a non-browser fetch (no bot-challenge
+  marker present), most likely because lidl.com's deeper routes are
+  client-side-rendered and a static fetch can't drive them. Net effect:
+  **the URL scheme `lidl_parser.py` builds is confirmed real** (matched
+  against Google's own index of live lidl.com pages, not invented) — the
+  exact query params, the embedded-JSON shape, every DOM selector, and
+  even the scroll-based pagination model are still best-effort guesses,
+  each marked `# TODO: verify live`.
+- No engine in this repo has been run against the live site yet, from any
+  environment. See `TESTING.md` for the checklist that closes this gap,
+  starting with the one run that matters most: a plain `--query` search
+  against the real site, inspected with `--dump-html`.
+- `sample_output.json`/`.csv` are clearly fictional (every brand name is
+  suffixed `(fictional sample)`), per CLAUDE.md §15 — no real capture
+  exists yet to sample from honestly.
+
+### Family-shared modules, ported unchanged in substance from skyscanner-scraper
+- `env_config.ENV_KEYS` renamed to this repo's own `LIDL_PROXY` /
+  `LIDL_CDP_ENDPOINT` / `LIDL_URL` (kept in sync with `.env.example`,
+  verified by a `smoke_test.py` check per CLAUDE.md §17).
+- `output_writer.py`'s exit codes, `STATUS_BY_EXIT` map, and
+  `finish_run()` precedence logic are byte-for-byte identical to both
+  prior family members — only `Product`'s site-specific tail differs.
+- `diff_runs.py`'s description string updated to name this repo; its
+  sku-diff logic is unchanged and unit-tested against two real
+  `finish_run()` outputs in `smoke_test.py`.
+
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/main...HEAD

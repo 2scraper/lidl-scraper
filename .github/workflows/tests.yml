@@ -1,0 +1,142 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline:
+    name: offline checks (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install core dependencies (no engine — smoke_test must still pass)
+        run: pip install -r requirements.txt
+      - name: Byte-compile everything
+        run: python -m compileall -q .
+      - name: Run the offline smoke suite
+        run: python3 smoke_test.py
+      - name: --help works for every CLI
+        run: |
+          for engine in playwright_scraper selenium_scraper puppeteer_scraper; do
+            python3 "$engine.py" --help > /dev/null
+          done
+      - name: sample_output.{json,csv} match the Product schema
+        run: |
+          python3 -c "
+          import csv, json
+          from output_writer import PRODUCT_FIELD_NAMES
+          rows = json.load(open('sample_output.json'))
+          assert rows and set(rows[0]) == set(PRODUCT_FIELD_NAMES)
+          with open('sample_output.csv', newline='') as f:
+              header = next(csv.reader(f))
+          assert header == PRODUCT_FIELD_NAMES
+          print('sample_output OK')
+          "
+      - name: No committed credentials
+        run: |
+          set +e
+          # smoke_test.py deliberately contains fake-credential-SHAPED
+          # fixtures to test the masking/redaction logic itself — excluded
+          # alongside .env.example, not a loosening of the check against
+          # real leaks (same exclusion the rest of the family applies to
+          # its own smoke_test.py).
+          MATCHES=$(grep -rnE "(api[_-]?key|TWOCAPTCHA_KEY|LIDL_PROXY)\s*=\s*['\"][A-Za-z0-9]{10,}" \
+            --include="*.py" --include="*.md" --include="*.env*" . | grep -vE "\.env\.example|smoke_test\.py")
+          set -e
+          if [ -n "$MATCHES" ]; then
+            echo "$MATCHES"
+            echo "::error::possible committed credential — see matches above"
+            exit 1
+          fi
+          echo "no committed credentials found"
+
+  docker:
+    name: docker image builds, runs, and launches Chromium
+    runs-on: ubuntu-latest
+    # Build the Docker image in CI — nothing else does, and this is how
+    # every older repo in this family shipped a broken one at least once.
+    # Four steps, each catching a distinct way the image can lie about
+    # working: it builds at all; its own entrypoint runs (the image's CMD
+    # is --help — the exact invocation a missing module breaks); a real
+    # browser actually launches (not just "playwright install --with-deps"
+    # exiting 0); and it carries no .env, no test suite and no fixtures —
+    # a .env baked into a published image is a credential handed to
+    # everyone who can pull it.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t lidl-scraper:ci .
+      - name: Entrypoint runs (the CMD a missing module would break)
+        run: docker run --rm lidl-scraper:ci
+      - name: A real browser actually launches inside the image
+        run: |
+          docker run --rm --entrypoint python3 lidl-scraper:ci -c "
+          import asyncio
+          from playwright.async_api import async_playwright
+          async def main():
+              async with async_playwright() as pw:
+                  browser = await pw.chromium.launch(headless=True, args=['--no-sandbox'])
+                  page = await browser.new_page()
+                  await page.goto('about:blank')
+                  await browser.close()
+              print('Chromium launched OK')
+          asyncio.run(main())
+          "
+      - name: Image carries no .env, test suite, or fixtures
+        run: |
+          BAD=$(docker run --rm --entrypoint sh lidl-scraper:ci -c \
+            "ls -d .env tests 2>/dev/null; ls *_test.py 2>/dev/null" || true)
+          if [ -n "$BAD" ]; then
+            echo "$BAD"
+            echo "::error::image contains files it must not ship: see above"
+            exit 1
+          fi
+          echo "image is clean"
+
+  engine-smoke:
+    name: engine-smoke (${{ matrix.engine }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [playwright, selenium, puppeteer]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # One venv PER engine, installed from its OWN requirements file. A
+      # single shared environment resolves the three engines' mutually
+      # unsatisfiable pins (pyee, urllib3) by reaching for whatever it can —
+      # on a sibling family repo that silently installed a pyppeteer 0.0.25
+      # stub instead of the real >=1.0.2 the requirements file asks for,
+      # and CI stayed green against a version nobody actually ships.
+      - name: Create venv and install requirements-${{ matrix.engine }}.txt
+        run: |
+          python -m venv .venv-${{ matrix.engine }}
+          source .venv-${{ matrix.engine }}/bin/activate
+          pip install -r requirements-${{ matrix.engine }}.txt
+          pip install pytest
+          pip check
+      - name: Install browser (Playwright only — Selenium/pyppeteer fetch their own)
+        if: matrix.engine == 'playwright'
+        run: |
+          source .venv-playwright/bin/activate
+          playwright install --with-deps chromium
+      - name: Run the smoke suite and assert THIS engine did not skip
+        run: |
+          source .venv-${{ matrix.engine }}/bin/activate
+          python3 smoke_test.py
+          python3 -c "
+          import ${{ matrix.engine }}_scraper as m
+          assert getattr(m, {'playwright': 'async_playwright', 'selenium': 'webdriver', 'puppeteer': 'pyppeteer_launch'}['${{ matrix.engine }}']) is not None, \
+              '${{ matrix.engine }} did not import — this job installed it and must not report absent'
+          print('${{ matrix.engine }} engine import OK')
+          "

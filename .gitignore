@@ -1,0 +1,36 @@
+# scraper output — large, machine-specific, stale by the time anyone reads it
+*.json
+*.csv
+!sample_output.json
+!sample_output.csv
+lidl_results.*
+*_debug.html
+*_debug.png
+live_results/
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.fingerprint_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# node (puppeteer/selenium tooling, if any local scripts are added later)
+node_modules/
+
+# editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# secrets
+*.log
+.env
+*.key
+secrets*
