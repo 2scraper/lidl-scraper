@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately — open a GitHub security advisory on this repo, or email security@2captcha.com — rather than a public issue. Include the version/commit and a minimal reproduction.
+Please report security issues privately — open a GitHub security advisory on this repo, or email support@2captcha.com — rather than a public issue. Include the version/commit and a minimal reproduction.
 
 ## What this tool does with credentials
 
