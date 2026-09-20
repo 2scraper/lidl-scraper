@@ -632,16 +632,22 @@ def _():
 
 @check("each engine: a malformed --proxy is EXIT_BAD_USAGE, not a crash, and writes nothing")
 def _():
+    # Best-effort, not a requirement that a driver be installed: CLAUDE.md
+    # §6 requires smoke_test.py to run cleanly with ZERO engine drivers
+    # present (that's exactly what the "offline checks" CI job installs —
+    # requirements.txt only, per §16's dependency split), so this must not
+    # demand `exercised > 0`. "This particular engine wasn't skipped" is
+    # already asserted independently, per engine, by tests.yml's own
+    # engine-smoke jobs (see the "assert THIS engine did not skip" step) —
+    # that's the right layer for it, not this driver-agnostic offline check.
     _IMPORT_ERROR_ATTR = {
         "playwright_scraper": "_PLAYWRIGHT_IMPORT_ERROR",
         "selenium_scraper": "_SELENIUM_IMPORT_ERROR",
         "puppeteer_scraper": "_PYPPETEER_IMPORT_ERROR",
     }
-    exercised = 0
     for mod in (playwright_scraper, selenium_scraper, puppeteer_scraper):
         if getattr(mod, _IMPORT_ERROR_ATTR[mod.__name__], None) is not None:
             continue
-        exercised += 1
         with tempfile.TemporaryDirectory() as td:
             out = str(Path(td) / "out.json")
             args = mod.build_arg_parser().parse_args([
@@ -653,7 +659,6 @@ def _():
                 f"(bad usage), got {code}"
             )
             assert not Path(out).exists(), f"{mod.__name__}: a bad-usage run must never write output"
-    assert exercised > 0, "no engine's driver is installed — this check ran against zero of the three engines"
 
 
 @check("selenium_scraper refuses a credentialed --cdp-endpoint with EXIT_BAD_USAGE")
