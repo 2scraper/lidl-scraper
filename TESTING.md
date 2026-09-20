@@ -1,29 +1,19 @@
 # Testing with real credentials and the live site
 
-**Update, 2026-09-20**: step 2 below — "check what the real page looks
-like" — has now been done once, manually, through a real Chromium browser
-(not an engine run). It found the original URL scheme and framework
-guesses wrong (see README's "Read this before trusting a run" and
-`lidl_parser.py`'s module docstring for the full, corrected picture) and
-`lidl_parser.py` has been updated to match what was actually seen, with a
-new real-capture fixture in `tests/fixtures/lidl_search_real.html`. What
-that manual pass did NOT do: run an actual engine (`playwright_scraper.py`
-etc.) end-to-end, confirm the discount/"weekly deal" markup shape, or
-confirm the store/zip session-binding mechanism. Everything below is
-still the checklist for closing those remaining gaps for real.
+**Update, 2026-09-20**: the primary Playwright engine has now been exercised
+live several times. The decisive pagination run used `--query milk
+--max-results 60`: it crossed Lidl's first lazy batch, returned 60 unique
+SKUs in 11 rounds, and wrote `status=complete` with price coverage 1.0.
+The live page reports 142 products and virtualizes its grid, which exposed
+and fixed two real defects: jumping straight to the bottom skipped transient
+tiles, and an unclicked `View More Products` control allowed an incomplete
+run to report success. The engines now walk viewport-sized steps, click the
+control after a batch stabilizes, and compare collected rows with Lidl's own
+product counter.
 
-Everything in this repo's own CHANGELOG/README not covered by the manual
-capture above was verified offline (`smoke_test.py`, mostly SYNTHETIC
-fixture replay — see that file's module docstring). **No engine has ever
-been run against the live www.lidl.com, from any environment.** Unlike
-skyscanner-scraper — whose build environment couldn't even READ the site
-(robots.txt-restricted) — this repo's own non-browser fetch tooling could
-reach lidl.com's robots.txt (wide open) and homepage cleanly, but every
-deeper URL it tried by plain fetch returned a 404; the manual browser
-capture above confirmed that was "a static fetch can't drive this app's
-client-side router," not active blocking — a real rendered browser had no
-trouble at all. This file is the checklist for closing the remaining gap
-(an actual engine run) for real.
+Still requiring live verification: Selenium and pyppeteer end-to-end,
+store/zip binding, image extraction, and an actual discounted/weekly-deal
+tile. Offline checks remain useful, but do not substitute for these runs.
 
 Run everything below from a normal terminal on your own machine — wherever
 this repo lives for you.

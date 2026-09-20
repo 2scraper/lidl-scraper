@@ -236,12 +236,16 @@ async def scrape_search(
     seen_skus: set = set()
     merged: List[Product] = []
     stall = 0
+    previous_height: Optional[int] = None
+    clicked_last_round = False
     rounds = 0
 
     for round_num in range(args.max_scrolls + 1):
         rounds = round_num
         html = await page.content()
-        if detect_from_html(html, lp.BOT_CHALLENGE_MARKERS):
+        captcha_detected = detect_from_html(html, lp.BOT_CHALLENGE_MARKERS)
+        cards_present = lp.count_result_cards(html) > 0
+        if captcha_detected and not cards_present:
             blocked = True
         captcha_result = await _maybe_solve_captcha(html=html, url=start_url, client=client, policy=args.solve_captcha, min_score=args.min_score)
         if captcha_result and captcha_result.get("action") in ("warning_no_key", "warning_solver_error", "detected_unidentified_widget"):
@@ -253,6 +257,7 @@ async def scrape_search(
         )
         round_skus = {_sku_key(p) for p in result.products}
         new_skus = round_skus - seen_skus
+        page_height = await page.evaluate("() => document.body.scrollHeight")
         if new_skus:
             for p in result.products:
                 if _sku_key(p) in new_skus:
@@ -260,26 +265,52 @@ async def scrape_search(
             seen_skus |= new_skus
             stall = 0
         else:
-            stall += 1
+            if previous_height == page_height:
+                stall += 1
+            else:
+                stall = 0
+        previous_height = page_height
+
+        if result.products:
+            blocked = False
 
         if len(merged) >= args.max_results:
             merged = merged[: args.max_results]
-            break
-        if stall >= args.stall_rounds:
             break
         if round_num >= args.max_scrolls:
             break
 
         try:
-            await page.evaluate("window.scrollBy(0, 4000);")
+            load_more = await page.querySelector("button.s-load-more__button")
+            if not new_skus and stall > 0 and not clicked_last_round and load_more is not None:
+                await page.evaluate("(button) => button.click()", load_more)
+                clicked_last_round = True
+                stall = 0
+            else:
+                if stall >= args.stall_rounds:
+                    break
+                await page.evaluate(
+                    "() => window.scrollBy(0, Math.max(Math.floor(window.innerHeight * 0.8), 600))"
+                )
+                clicked_last_round = False
         except Exception as exc:  # noqa: BLE001 — a scroll failure ends the loop, not the run
             log.warning("Scroll failed, stopping pagination early: %s", exc)
             scroll_error = True
             break
         await asyncio.sleep(args.scroll_delay)
 
+    final_html = await page.content()
+    total_available = lp.total_result_count(final_html)
+    expected = min(total_available, args.max_results) if total_available is not None else None
+    if expected is not None and len(merged) < expected:
+        log.warning(
+            "Incomplete virtualized grid: Lidl reports %d products, requested %d, collected %d.",
+            total_available, args.max_results, len(merged),
+        )
+        scroll_error = True
+
     if args.dump_html:
-        Path(_dump_path(args.out)).write_text(await page.content(), encoding="utf-8")
+        Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
 
     await browser.close()
     return merged, blocked, remote_api_error, rounds, scroll_error
@@ -287,11 +318,6 @@ async def scrape_search(
 
 async def run(args: argparse.Namespace) -> int:
     started_at = time.time()
-    if pyppeteer_launch is None:
-        print(f"Error: pyppeteer is not installed ({_PYPPETEER_IMPORT_ERROR}). "
-              f"pip install -r requirements-puppeteer.txt", file=sys.stderr)
-        return EXIT_CRASH
-
     start_url = _resolve_start_url(args)
     if not start_url:
         print("Error: provide --url, --query, or --category", file=sys.stderr)
@@ -299,6 +325,10 @@ async def run(args: argparse.Namespace) -> int:
     if args.format not in ("json", "csv"):
         print(f"Error: unsupported --format {args.format!r}", file=sys.stderr)
         return EXIT_BAD_USAGE
+    if pyppeteer_launch is None:
+        print(f"Error: pyppeteer is not installed ({_PYPPETEER_IMPORT_ERROR}). "
+              f"pip install -r requirements-puppeteer.txt", file=sys.stderr)
+        return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
 
     try:

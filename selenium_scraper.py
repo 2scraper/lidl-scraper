@@ -271,12 +271,16 @@ def scrape_search(
     seen_skus: set = set()
     merged: List[Product] = []
     stall = 0
+    previous_height: Optional[int] = None
+    clicked_last_round = False
     rounds = 0
 
     for round_num in range(args.max_scrolls + 1):
         rounds = round_num
         html = driver.page_source
-        if detect_from_html(html, lp.BOT_CHALLENGE_MARKERS):
+        captcha_detected = detect_from_html(html, lp.BOT_CHALLENGE_MARKERS)
+        cards_present = lp.count_result_cards(html) > 0
+        if captcha_detected and not cards_present:
             blocked = True
         captcha_result = _maybe_solve_captcha(html=html, url=start_url, client=client, policy=args.solve_captcha, min_score=args.min_score)
         if captcha_result and captcha_result.get("action") in ("warning_no_key", "warning_solver_error", "detected_unidentified_widget"):
@@ -288,6 +292,7 @@ def scrape_search(
         )
         round_skus = {_sku_key(p) for p in result.products}
         new_skus = round_skus - seen_skus
+        page_height = int(driver.execute_script("return document.body.scrollHeight") or 0)
         if new_skus:
             for p in result.products:
                 if _sku_key(p) in new_skus:
@@ -295,26 +300,53 @@ def scrape_search(
             seen_skus |= new_skus
             stall = 0
         else:
-            stall += 1
+            if previous_height == page_height:
+                stall += 1
+            else:
+                stall = 0
+        previous_height = page_height
+
+        if result.products:
+            blocked = False
 
         if len(merged) >= args.max_results:
             merged = merged[: args.max_results]
-            break
-        if stall >= args.stall_rounds:
             break
         if round_num >= args.max_scrolls:
             break
 
         try:
-            driver.execute_script("window.scrollBy(0, 4000);")
+            load_more = driver.find_elements("css selector", "button.s-load-more__button")
+            can_load_more = bool(load_more and load_more[0].is_displayed() and load_more[0].is_enabled())
+            if not new_skus and stall > 0 and not clicked_last_round and can_load_more:
+                driver.execute_script("arguments[0].click();", load_more[0])
+                clicked_last_round = True
+                stall = 0
+            else:
+                if stall >= args.stall_rounds:
+                    break
+                driver.execute_script(
+                    "window.scrollBy(0, Math.max(Math.floor(window.innerHeight * 0.8), 600));"
+                )
+                clicked_last_round = False
         except WebDriverException as exc:
             log.warning("Scroll failed, stopping pagination early: %s", exc)
             scroll_error = True
             break
         time.sleep(args.scroll_delay)
 
+    final_html = driver.page_source
+    total_available = lp.total_result_count(final_html)
+    expected = min(total_available, args.max_results) if total_available is not None else None
+    if expected is not None and len(merged) < expected:
+        log.warning(
+            "Incomplete virtualized grid: Lidl reports %d products, requested %d, collected %d.",
+            total_available, args.max_results, len(merged),
+        )
+        scroll_error = True
+
     if args.dump_html:
-        Path(_dump_path(args.out)).write_text(driver.page_source, encoding="utf-8")
+        Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
 
     driver.quit()
     return merged, blocked, remote_api_error, rounds, scroll_error
@@ -322,11 +354,6 @@ def scrape_search(
 
 def run(args: argparse.Namespace) -> int:
     started_at = time.time()
-    if webdriver is None:
-        print(f"Error: selenium is not installed ({_SELENIUM_IMPORT_ERROR}). "
-              f"pip install -r requirements-selenium.txt", file=sys.stderr)
-        return EXIT_CRASH
-
     start_url = _resolve_start_url(args)
     if not start_url:
         print("Error: provide --url, --query, or --category", file=sys.stderr)
@@ -342,6 +369,10 @@ def run(args: argparse.Namespace) -> int:
             "for the Scraping Browser API.", file=sys.stderr,
         )
         return EXIT_BAD_USAGE
+    if webdriver is None:
+        print(f"Error: selenium is not installed ({_SELENIUM_IMPORT_ERROR}). "
+              f"pip install -r requirements-selenium.txt", file=sys.stderr)
+        return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
 
     try:

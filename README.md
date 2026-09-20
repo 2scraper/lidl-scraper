@@ -63,24 +63,22 @@ Most of what used to be a guess here is now a confirmed fact:
   session — the single biggest remaining gap this repo had (see
   `TESTING.md` step 2) is now closed.
 - **Still unconfirmed**: the exact markup of an actual discounted/
-  "weekly deal" tile (none was captured) — `original_price`/
-  `discount_pct`/`is_weekly_deal` extraction from a real tile is still a
-  best-effort guess; and whether scrolling alone ever loads results past
-  the first ~48 (the real UI has a "View More Products" button — unclear
-  if it's also triggered by scroll proximity, or needs an actual click).
+  "weekly deal" tile (none was captured), image extraction, and the
+  store/zip session-binding mechanism. Batched virtual-grid pagination and
+  the real `View More Products` control are now live-verified.
 - **The architecture — exit codes, the output contract, dedupe,
   credential redaction, CLI validation, all three engines importing
-  cleanly, the crash-safety wrapper around parsing — is real and tested**,
-  as before. `smoke_test.py` now also includes one fixture built from the
-  real capture above (`tests/fixtures/lidl_search_real.html`), not just
-  synthetic ones — see `smoke_test.py`'s own module docstring for which is
-  which.
-- This capture was done through a real browser, by hand, on one search
-  term (and one "milk" category browse) — it is not the same as a full
-  engine run (`playwright_scraper.py` etc.) completing end-to-end.
-  `TESTING.md` still has the checklist for that, and the discount/
-  pagination/store-binding gaps above are exactly what a real engine run
-  would help close next.
+  cleanly, and the shared crash-safety wrapper around parsing (a bad
+  round degrades to "found nothing new," never a crash that discards
+  already-collected sibling rounds — CLAUDE.md §6/§10, same idiom as
+  skyscanner-scraper's `flight_parser.safe_parse_search_results`) — is
+  real and tested**, as before. `smoke_test.py` now also includes one
+  fixture built from the real capture above
+  (`tests/fixtures/lidl_search_real.html`), not just synthetic ones — see
+  `smoke_test.py`'s own module docstring for which is which.
+- Manual captures were followed by full Playwright engine runs, including a
+  60-item query that crossed the first lazy batch. `TESTING.md` records the
+  remaining Selenium/pyppeteer and field-level live checks.
 
 ## Local-first
 
@@ -116,12 +114,11 @@ python3 playwright_scraper.py --query "whole milk" --format json --out lidl_resu
 # with a region and a result cap
 python3 playwright_scraper.py --query "sourdough bread" --zip 11803 --max-results 20
 
-# a specials/weekly-deals category (the id is opaque — find one by browsing
-# lidl.com/specials and copying its ?category=<hex-id>, not by guessing)
-python3 playwright_scraper.py --category be8072a237eb7908c193ee9175e2f8c87e48fe8b
+# a category path copied from lidl.com's own navigation
+python3 playwright_scraper.py --category food-wine/s10068374
 
 # a full lidl.com URL directly (escape hatch — bypasses --query/--category)
-python3 playwright_scraper.py --url "https://www.lidl.com/search/products/milk"
+python3 playwright_scraper.py --url "https://www.lidl.com/q/search?q=milk"
 
 # with 2Captcha's Scraping Browser API (opt-in — see "Local-first" above)
 python3 playwright_scraper.py --query "whole milk" --cdp-endpoint "$LIDL_CDP_ENDPOINT"
@@ -207,11 +204,8 @@ fingerprint of `product_url` only when it can't. `brand` is the actual
 product brand printed on the item. `category` is the grocery
 aisle/category lidl.com itself assigns, when available. `price_source` is
 `embedded_json` or `dom`, mirroring which extraction path actually
-produced the row — never a defaulted guess. See `sample_output.json` /
-`sample_output.csv` — **these are a clearly fictional illustration of the
-schema** (every brand name is suffixed `(fictional sample)`), not a real
-capture — see "Read this before trusting a run" above for why no real one
-exists yet.
+produced the row — never a defaulted guess. `sample_output.json` and
+`sample_output.csv` are trimmed from the verified live Playwright run.
 
 **Exit codes**: `0` complete · `1` crash · `2` bad usage · `3` blocked ·
 `4` zero products (and nothing was written) · `5` remote API error · `6`
@@ -227,13 +221,15 @@ being present never launders a blocked/remote-API-error run into
 
 ## Pagination
 
-**Assumption, not a confirmed fact** (see "Read this before trusting a
-run" above): every engine here scrolls and re-parses the accumulated
-page, deduping by `sku`, until `--max-results` is reached or
-`--stall-rounds` consecutive scrolls add nothing new (capped by
-`--max-scrolls` either way) — the same lazy-load-on-scroll model
-skyscanner-scraper uses for ITS site, chosen here because it degrades
-safely even if lidl.com's real UI turns out to paginate differently.
+Lidl's grid is both batched and virtualized. Each engine walks the page in
+viewport-sized steps so every transient tile is parsed, clicks the confirmed
+`View More Products` control only after the current batch has stabilized,
+and dedupes by `sku`. The page's own `N Products` counter is an arithmetic
+completeness check: if fewer than `min(N, --max-results)` rows were captured,
+the run is `partial` (exit 6), never a plausible-looking `complete` result.
+
+Live verification on 2026-09-20: `--query milk --max-results 60` returned 60
+unique SKUs in 11 rounds with `status=complete` and price coverage 1.0.
 
 ## Engines
 
@@ -261,10 +257,6 @@ site):
 
 ## Known limitations
 
-- **Nothing in `lidl_parser.py` has been checked against a live,
-  browser-rendered response** — see "Read this before trusting a run"
-  above. This is the single biggest open item, and the reason this
-  section leads with it.
 - **No site-specific block-page marker exists.** `lidl_parser.
   BOT_CHALLENGE_MARKERS` is deliberately empty — detection still runs via
   `captcha_solver.GENERIC_BOT_CHALLENGE_MARKERS` (Cloudflare/reCAPTCHA/
@@ -282,11 +274,10 @@ site):
   "Read this before trusting a run" above. `--zip`/`--store-id` record
   intent and annotate output rows; they are not confirmed to change what
   a search actually returns yet.
-- **The embedded-JSON extraction path (`__NEXT_DATA__` fallback) is a
-  generic heuristic on an unconfirmed framework guess** — unlike
-  skyscanner.com (publicly known to be Next.js-based), whether lidl.com
-  uses Next.js at all is unverified. The JSON-LD path is tried first
-  precisely because it doesn't depend on that guess being right.
+- **Images and weekly-deal fields are not yet live-verified.** The current
+  listing path deliberately leaves them null rather than guessing. A future
+  capture should add them from Lidl's own product payload or confirmed tile
+  markup.
 
 ## Development
 
@@ -297,10 +288,9 @@ python3 smoke_test.py     # or: pytest tests/test_smoke.py
 Passes with **no** engine library installed at all (each engine guards its
 driver import behind a module-level `try/except ImportError`).
 
-**Testing against the live site**: see [`TESTING.md`](TESTING.md) — a
-step-by-step checklist, starting with the one test that actually matters
-for this repo: pointing the local-first default at a real search and
-checking whether `lidl_parser.py`'s guesses hold up.
+**Testing against the live site**: see [`TESTING.md`](TESTING.md). The primary
+Playwright path is live-verified; Selenium, pyppeteer, store binding, images,
+and discounted tiles remain the highest-value live checks.
 
 ## License
 

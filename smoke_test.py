@@ -133,6 +133,24 @@ def _():
         assert mod._default_out("json") == "lidl_results.json"
 
 
+@check("all engines load to document bottom, click Lidl's View More control, and require stable height")
+def _():
+    for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
+        src = (ROOT / path).read_text(encoding="utf-8")
+        assert "button.s-load-more__button" in src, f"{path}: confirmed live load-more button is ignored"
+        assert "document.body.scrollHeight" in src, f"{path}: still uses a fixed-distance scroll"
+        assert "previous_height" in src, f"{path}: height is absent from the stability decision"
+
+
+@check("captcha markers only classify a page as blocked when product cards are absent")
+def _():
+    for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
+        src = (ROOT / path).read_text(encoding="utf-8")
+        assert "captcha_detected and not cards_present" in src, (
+            f"{path}: a marker can still turn a healthy product page into EXIT_BLOCKED"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # output_writer — exit codes / precedence / dedupe (CLAUDE.md §9)
 # --------------------------------------------------------------------------- #
@@ -463,6 +481,21 @@ def _():
     assert res.source_used == "none"
 
 
+@check("JSON-LD handles legal list/image/url shapes without inventing currency")
+def _():
+    html = """<script type="application/ld+json">{
+      "@context":"https://schema.org", "@type":"Product", "name":"Milk",
+      "image":[null, {"contentUrl":"https://img.example/milk.jpg"}],
+      "offers":[null, "junk", {"price":"2.50", "url":"/p/milk/p123"}]
+    }</script>"""
+    result = lp.parse_search_results(html)
+    assert len(result.products) == 1
+    product = result.products[0]
+    assert product.product_url == "https://www.lidl.com/p/milk/p123"
+    assert product.image_url == "https://img.example/milk.jpg"
+    assert product.currency is None, "missing structured currency must remain null"
+
+
 _DOM_FALLBACK_HTML = """
 <html><body>
 <div data-testid="product-tile">
@@ -496,6 +529,13 @@ def _():
 @check("count_result_cards counts DOM cards without a readiness wait")
 def _():
     assert lp.count_result_cards(_DOM_FALLBACK_HTML) == 2
+
+
+@check("total_result_count reads Lidl's own catalogue total for completeness checks")
+def _():
+    html = '<span class="s-products-count__label">1,142 Products</span>'
+    assert lp.total_result_count(html) == 1142
+    assert lp.total_result_count("<html><body>No catalogue counter</body></html>") is None
     assert lp.count_result_cards("<html><body>nothing here</body></html>") == 0
 
 
@@ -552,12 +592,19 @@ def _():
     assert len(res.products) == 3
 
 
-@check("safe_parse_search_results degrades a parse exception to an empty result, never raises")
+@check("safe_parse_search_results degrades a bad round instead of crashing the whole run")
 def _():
-    # None isn't valid markup — BeautifulSoup raises TypeError on it, which
-    # is exactly the "unexpected exception inside parsing" case this
-    # wrapper exists to degrade instead of propagating (see its docstring).
-    res = lp.safe_parse_search_results(None)  # type: ignore[arg-type]
+    # Family invariant (CLAUDE.md §6/§10): a parse-time exception on one
+    # round must degrade to an empty round, never propagate and crash the
+    # multi-round scrape, discarding every product already collected in
+    # earlier rounds. Reproduce a genuine parsing-time defect (not a caller
+    # passing the wrong type) by monkeypatching the primary extraction path.
+    original = lp.extract_gridbox_products
+    lp.extract_gridbox_products = lambda *a, **kw: (_ for _ in ()).throw(ValueError("simulated parser defect"))
+    try:
+        res = lp.safe_parse_search_results("<html></html>")
+    finally:
+        lp.extract_gridbox_products = original
     assert res.products == []
     assert res.source_used == "none"
 

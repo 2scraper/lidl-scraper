@@ -445,7 +445,7 @@ def _price_from_offers(node: dict) -> tuple:
     also accepted for robustness."""
     offers = node.get("offers")
     if isinstance(offers, list):
-        offers = offers[0] if offers else None
+        offers = next((offer for offer in offers if isinstance(offer, dict)), None)
     if not isinstance(offers, dict):
         return None, None, None, None, None
 
@@ -485,7 +485,7 @@ def _unit_price_from_node(node: dict) -> tuple:
     `description`. Returns (unit_price, unit_size)."""
     offers = node.get("offers")
     if isinstance(offers, list):
-        offers = offers[0] if offers else None
+        offers = next((offer for offer in offers if isinstance(offer, dict)), None)
     if isinstance(offers, dict):
         spec = offers.get("priceSpecification")
         specs = spec if isinstance(spec, list) else [spec] if spec else []
@@ -530,12 +530,16 @@ def _json_ld_node_to_product(node: dict, *, zip_code: Optional[str], store_id: O
         return None  # no usable price on this node — skip rather than fabricate a row
 
     product_id = _product_id_from_node(node)
-    product_url = _clean_product_url(node.get("url"))
+    offers = node.get("offers")
+    if isinstance(offers, list):
+        offers = next((offer for offer in offers if isinstance(offer, dict)), None)
+    offers_url = offers.get("url") if isinstance(offers, dict) else None
+    product_url = _clean_product_url(node.get("url") or offers_url)
     image = node.get("image")
     if isinstance(image, list):
-        image = image[0] if image else None
+        image = next((item for item in image if isinstance(item, (str, dict))), None)
     if isinstance(image, dict):
-        image = image.get("url")
+        image = image.get("url") or image.get("contentUrl")
 
     unit_price, unit_size = _unit_price_from_node(node)
 
@@ -546,7 +550,7 @@ def _json_ld_node_to_product(node: dict, *, zip_code: Optional[str], store_id: O
         title=title,
         brand=_brand_from_node(node),
         price=price,
-        currency=currency or "USD",
+        currency=currency,
         price_source="embedded_json",
         product_url=product_url,
         image_url=image,
@@ -724,6 +728,23 @@ def count_result_cards(html: str) -> int:
     return 0
 
 
+_TOTAL_RESULTS_RE = re.compile(r"\b([\d,]+)\s+Products?\b", re.IGNORECASE)
+
+
+def total_result_count(html: str) -> Optional[int]:
+    """Read Lidl's own catalogue total (for example ``142 Products``).
+
+    This is used as an arithmetic completeness check. Lidl virtualizes its
+    grid, so the final DOM can truthfully say 142 products while only eight
+    cards are materialized at that exact scroll position.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    label = soup.select_one(".s-products-count__label")
+    text = label.get_text(" ", strip=True) if label else soup.get_text(" ", strip=True)
+    match = _TOTAL_RESULTS_RE.search(text)
+    return int(match.group(1).replace(",", "")) if match else None
+
+
 def _parse_result_cards_from_dom(
     html: str, *, zip_code: Optional[str], store_id: Optional[str], max_results: Optional[int],
 ) -> List[Product]:
@@ -826,14 +847,25 @@ def _now_iso() -> str:
 
 
 def safe_parse_search_results(html: str, **kwargs) -> SearchResult:
-    """Wraps `parse_search_results` so an unexpected exception INSIDE
-    parsing degrades that ONE scroll/page round to "found nothing new
-    here" instead of propagating out of an engine's loop and crashing the
-    whole run — which would discard every product already collected in
-    earlier rounds (CLAUDE.md §6/§10). All three of this repo's engines
-    call this instead of `parse_search_results` directly."""
+    """Public engine entry point. Wraps `parse_search_results` so an
+    unexpected exception INSIDE parsing (a round whose markup doesn't match
+    either extraction path in some new way `parse_search_results` itself
+    doesn't already guard against) degrades that ONE round to "found
+    nothing new here" instead of propagating out of an engine's round loop
+    and crashing the whole run — which would discard every product already
+    collected in earlier rounds. This is the same family-wide invariant
+    (CLAUDE.md §6/§10) as skyscanner-scraper's `flight_parser.
+    safe_parse_search_results` and stockx-scraper's per-engine `safe_parse`
+    closures: one bad round is a reason to log loudly and move on, not to
+    lose everything gathered so far. The exception is logged at ERROR level
+    with its message so a real parser defect is never silently confused
+    with a legitimately empty page — a suspiciously high rate of
+    `source_used == "none"` in the logs across many rounds/runs is the
+    signal to investigate, not proof the site changed. All three engines
+    call this instead of `parse_search_results` directly.
+    """
     try:
         return parse_search_results(html, **kwargs)
     except Exception as exc:  # noqa: BLE001 — see docstring above
-        log.error("A page/round's HTML failed to parse — treating it as empty, not crashing: %s", exc)
+        log.error("A round's HTML failed to parse — treating it as empty, not crashing: %s", exc)
         return SearchResult(products=[], source_used="none")

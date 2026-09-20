@@ -9,6 +9,47 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+### Reviewed — 2026-09-20, restored the family's round-level crash safety
+- `lidl_parser.safe_parse_search_results()` had been changed to let a
+  parsing exception propagate to the engine's top-level crash handler
+  instead of degrading that one round to empty. Restored the family-wide
+  invariant (CLAUDE.md §6/§10, same idiom as skyscanner-scraper's
+  `flight_parser.safe_parse_search_results` and stockx-scraper's per-engine
+  `safe_parse` closures): a bad round degrades to "found nothing new,"
+  logged at ERROR level with the exception's message, rather than crashing
+  a multi-round scrape and discarding every product already collected in
+  earlier rounds. The logging is what keeps this from silently masking a
+  real parser bug as a legitimately empty page — see the function's
+  docstring. `smoke_test.py`'s check was updated to match: it now
+  reproduces a genuine parsing-time exception (a monkeypatched extraction
+  path) and asserts the round degrades instead of asserting the process
+  raises.
+
+### Fixed — 2026-09-20, live pagination and contract audit
+- Fixed Lidl's virtualized result grid across Playwright, Selenium, and
+  pyppeteer. Engines now walk viewport-sized steps, harvest each transient
+  set of materialized cards, and click the live `View More Products` control
+  only after the current batch stabilizes. The OneTrust overlay is bypassed
+  with a DOM click on this confirmed site control.
+- Added an arithmetic completeness guard based on Lidl's own `N Products`
+  counter. Hitting a scroll limit before collecting
+  `min(N, --max-results)` now produces `partial`/exit 6 instead of a false
+  `complete` run.
+- Live-verified the batch boundary with `--query milk --max-results 60`:
+  60 unique SKUs, 11 rounds, exit 0, `status=complete`, price coverage 1.0.
+- Fixed Selenium CLI validation running after its optional driver import,
+  which made bad input return crash/exit 1 on machines without Selenium.
+- Fixed captcha markers making a page `blocked` even when product cards were
+  already present; a managed-browser extension marker can no longer poison a
+  healthy run.
+- Hardened JSON-LD handling for non-dict offer entries, `offers.url`,
+  `ImageObject.contentUrl`, and missing currency (kept null, never invented).
+- Canary now requires a complete multi-round result with product and price
+  floors. Blocked, empty, remote-error, and partial outcomes fail the canary.
+- Removed the optional `python-dotenv` core dependency; `env_config.py` keeps
+  the documented dependency-free parser and still defers to python-dotenv
+  when a host application already provides it.
+
 ### Verified live, 2026-09-20 (later the same day) — first real end-to-end engine run
 - `python3 playwright_scraper.py --query "whole milk" --max-results 10
   --format json --out /tmp/lidl_test.json` run against the real, live
@@ -65,9 +106,7 @@ rather than being a silent violation of that.
   own fixes, noted here only as the contrast (lidl.com showed no blocking
   of any kind).
 - Still open: real markup for a discounted/"weekly deal" tile (none was
-  captured), and confirmation of whether scroll-only pagination reaches
-  results past the first ~48 or whether the real "View More Products"
-  button must be clicked.
+  captured), image extraction, and the store/zip binding mechanism.
 
 ### Added — initial build, third member of the 2scraper family
 - First build of `lidl-scraper`, following `stockx-scraper` and
@@ -94,26 +133,6 @@ rather than being a silent violation of that.
 - `--zip`/`--store-id` flags, threaded through to every output row, for a
   site where the same search can legitimately return different prices by
   region — a dimension neither sibling repo's schema needed to model.
-
-### Honesty note — read before trusting anything above
-- **robots.txt on lidl.com is wide open** (`Disallow:` empty) — unlike
-  skyscanner-scraper, nothing here was blocked from being fetched by
-  policy. But every URL deeper than the homepage that this session tried
-  returned a plain HTTP 404 to a non-browser fetch (no bot-challenge
-  marker present), most likely because lidl.com's deeper routes are
-  client-side-rendered and a static fetch can't drive them. Net effect:
-  **the URL scheme `lidl_parser.py` builds is confirmed real** (matched
-  against Google's own index of live lidl.com pages, not invented) — the
-  exact query params, the embedded-JSON shape, every DOM selector, and
-  even the scroll-based pagination model are still best-effort guesses,
-  each marked `# TODO: verify live`.
-- No engine in this repo has been run against the live site yet, from any
-  environment. See `TESTING.md` for the checklist that closes this gap,
-  starting with the one run that matters most: a plain `--query` search
-  against the real site, inspected with `--dump-html`.
-- `sample_output.json`/`.csv` are clearly fictional (every brand name is
-  suffixed `(fictional sample)`), per CLAUDE.md §15 — no real capture
-  exists yet to sample from honestly.
 
 ### Family-shared modules, ported unchanged in substance from skyscanner-scraper
 - `env_config.ENV_KEYS` renamed to this repo's own `LIDL_PROXY` /

@@ -10,8 +10,9 @@ launches an ordinary local headless Chromium by default and does NOT
 require a 2Captcha Scraping Browser (`--cdp-endpoint`) session to run at
 all. Unlike skyscanner-scraper (robots.txt-restricted) this repo's own
 build environment COULD fetch lidl.com's robots.txt and homepage — both
-came back clean, with no bot-challenge marker anywhere — but no engine
-here has actually been run against the live site yet (see TESTING.md).
+came back clean, with no bot-challenge marker anywhere. The local Playwright
+path is now live-verified; see TESTING.md for measured results and remaining
+engine-specific checks.
 `--cdp-endpoint` and `--proxy` remain available as opt-in power options
 for volume/a specific exit country/a consistent device identity, exactly
 as the rest of the family frames them — not because local-first is known
@@ -19,17 +20,11 @@ to fail here.
 
 Example:
     python3 playwright_scraper.py --query "whole milk" --zip 11803 --format json --out results.json
-    python3 playwright_scraper.py --url "https://www.lidl.com/search/products/milk" --max-results 20
+    python3 playwright_scraper.py --url "https://www.lidl.com/q/search?q=milk" --max-results 20
 
-**Pagination model — an assumption, not a confirmed fact** (see
-lidl_parser.py's module docstring for the same caveat applied to
-selectors/embedded-JSON shape): this engine scrolls and re-parses the
-accumulated page, deduping by `sku` (output_writer.sku_key), the same
-lazy-load-on-scroll model skyscanner-scraper uses for ITS site — chosen
-here because it degrades safely even if wrong (a classically-paginated
-lidl.com page would just stall immediately with whatever the first page
-had, not crash or hang), not because lidl.com's real UI has been
-confirmed to work this way.
+Lidl's live grid is batched and virtualized. This engine walks it in viewport
+steps, clicks `View More Products` after a batch stabilizes, and checks the
+collected count against the site's own total before reporting completion.
 """
 from __future__ import annotations
 
@@ -62,7 +57,7 @@ ENGINE_NAME = "playwright"
 
 # --- the handful of engine constants that vary per site (CLAUDE.md §5) ---
 NAV_TIMEOUT_MS = 30_000
-READINESS_WAIT_MS = 3_000  # TODO: verify live — lidl.com's homepage rendered client-side
+READINESS_WAIT_MS = 3_000
                             # content (see lidl_parser.py docstring); assumed client-rendered
                             # here too pending a real capture.
 MIN_CARD_MATCHES = lp.MIN_CARD_MATCHES
@@ -98,7 +93,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--url", default=None, help="Full lidl.com search/specials URL (or set LIDL_URL) — overrides --query/--category")
     p.add_argument("--query", default=None, help="Product search term, e.g. 'whole milk'")
-    p.add_argument("--category", default=None, help="A /specials?category=<hex-id> id (see README — these ids are opaque and must be found by browsing, not guessed)")
+    p.add_argument("--category", default=None, help="A category path copied from Lidl navigation, e.g. food-wine/s10068374")
     p.add_argument("--zip", dest="zip_code", default=None, help="US zip code for store/region pricing (mechanism unconfirmed — see lidl_parser.py docstring)")
     p.add_argument("--store-id", default=None, help="Recorded on output rows only — no confirmed way yet to select a store by id directly (see README)")
     p.add_argument("--sort", choices=lp.SORT_VALUES, default="relevance")
@@ -264,12 +259,16 @@ async def scrape_search(
     seen_skus: set = set()
     merged: List[Product] = []
     stall = 0
+    previous_height: Optional[int] = None
+    clicked_last_round = False
     rounds = 0
 
     for round_num in range(args.max_scrolls + 1):
         rounds = round_num
         html = await page.content()
-        if detect_from_html(html, lp.BOT_CHALLENGE_MARKERS):
+        captcha_detected = detect_from_html(html, lp.BOT_CHALLENGE_MARKERS)
+        cards_present = lp.count_result_cards(html) > 0
+        if captcha_detected and not cards_present:
             blocked = True
         captcha_result = await _maybe_solve_captcha(html=html, url=start_url, client=client, policy=args.solve_captcha, min_score=args.min_score)
         if captcha_result and captcha_result.get("action") in ("warning_no_key", "warning_solver_error", "detected_unidentified_widget"):
@@ -289,6 +288,7 @@ async def scrape_search(
 
         round_skus = {_sku_key(p) for p in result.products}
         new_skus = round_skus - seen_skus
+        page_height = await page.evaluate("() => document.body.scrollHeight")
         if new_skus:
             for p in result.products:
                 if _sku_key(p) in new_skus:
@@ -296,26 +296,64 @@ async def scrape_search(
             seen_skus |= new_skus
             stall = 0
         else:
-            stall += 1
+            if previous_height == page_height:
+                stall += 1
+            else:
+                stall = 0
+        previous_height = page_height
+
+        # A challenge marker does not make a page blocked when products are
+        # already present (the managed CDP browser injects captcha-related
+        # extension markup into otherwise healthy pages). A successful solve
+        # may also replace an initially blocked document in the same tab.
+        if result.products:
+            blocked = False
 
         if len(merged) >= args.max_results:
             merged = merged[: args.max_results]
-            break
-        if stall >= args.stall_rounds:
             break
         if round_num >= args.max_scrolls:
             break
 
         try:
-            await page.mouse.wheel(0, 4000)
+            load_more = page.locator("button.s-load-more__button").first
+            can_load_more = (
+                await load_more.count() and await load_more.is_visible() and await load_more.is_enabled()
+            )
+            if not new_skus and stall > 0 and not clicked_last_round and can_load_more:
+                # Lidl's OneTrust dark-filter can cover the button even
+                # though the button itself is visible and enabled. This is
+                # a known site control, so dispatch its click through the
+                # DOM instead of letting the consent overlay turn a valid
+                # listing into a partial run.
+                await load_more.evaluate("button => button.click()")
+                clicked_last_round = True
+                stall = 0
+            else:
+                if stall >= args.stall_rounds:
+                    break
+                await page.evaluate(
+                    "() => window.scrollBy(0, Math.max(Math.floor(window.innerHeight * 0.8), 600))"
+                )
+                clicked_last_round = False
         except Exception as exc:  # noqa: BLE001 — a scroll failure ends the loop, not the run
             log.warning("Scroll failed, stopping pagination early: %s", exc)
             scroll_error = True
             break
         await asyncio.sleep(args.scroll_delay)
 
+    final_html = await page.content()
+    total_available = lp.total_result_count(final_html)
+    expected = min(total_available, args.max_results) if total_available is not None else None
+    if expected is not None and len(merged) < expected:
+        log.warning(
+            "Incomplete virtualized grid: Lidl reports %d products, requested %d, collected %d.",
+            total_available, args.max_results, len(merged),
+        )
+        scroll_error = True
+
     if args.dump_html:
-        Path(_dump_path(args.out)).write_text(await page.content(), encoding="utf-8")
+        Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
 
     await context.close()
     return merged, blocked, remote_api_error, rounds, scroll_error
@@ -323,10 +361,6 @@ async def scrape_search(
 
 async def run(args: argparse.Namespace) -> int:
     started_at = time.time()
-    if async_playwright is None:
-        print(f"Error: playwright is not installed ({_PLAYWRIGHT_IMPORT_ERROR}). "
-              f"pip install -r requirements-playwright.txt && playwright install chromium", file=sys.stderr)
-        return EXIT_CRASH
     start_url = _resolve_start_url(args)
     if not start_url:
         print("Error: provide --url, --query, or --category", file=sys.stderr)
@@ -334,6 +368,10 @@ async def run(args: argparse.Namespace) -> int:
     if args.format not in ("json", "csv"):
         print(f"Error: unsupported --format {args.format!r}", file=sys.stderr)
         return EXIT_BAD_USAGE
+    if async_playwright is None:
+        print(f"Error: playwright is not installed ({_PLAYWRIGHT_IMPORT_ERROR}). "
+              f"pip install -r requirements-playwright.txt && playwright install chromium", file=sys.stderr)
+        return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
 
     try:
