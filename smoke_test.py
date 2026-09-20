@@ -5,17 +5,21 @@ a single pytest entry point so `pytest` also works, without a second copy
 of the checks.
 
 **Honesty note, read before trusting a green run** (same caveat as every
-other family member's smoke_test.py, e.g. skyscanner-scraper's): every
-HTML fixture below is SYNTHETIC — hand-written to exercise the parsing
-code paths, not a real capture of lidl.com. A green run here proves the
-architecture (exit codes, dedupe, precedence, credential redaction, CLI
-validation, engines importing cleanly) is sound, and that the parser's OWN
-LOGIC does what it says on markup shaped the way this repo GUESSED
-lidl.com looks (the JSON-LD path is the one exception with real grounding
-— schema.org Product markup is a standard, documented e-commerce SEO
-practice, not a lidl.com-specific guess). It does NOT prove
-lidl_parser.py's selectors or embedded-JSON shape match the real, current
-site — that still needs a live `--dump-html` capture, see TESTING.md.
+other family member's smoke_test.py, e.g. skyscanner-scraper's): most HTML
+fixtures below are SYNTHETIC — hand-written to exercise the parsing code
+paths, not a real capture of lidl.com. `tests/fixtures/lidl_search_real.html`
+is the one exception: it's a trimmed, hand-built reproduction of the REAL
+markup shape and REAL values captured live on 2026-09-20 via an actual
+rendered browser (see `lidl_parser.py`'s module docstring and TESTING.md)
+— real product names/brands/prices/unit-prices, only page chrome trimmed
+and tracking params simplified. A green run on the synthetic fixtures
+proves the architecture (exit codes, dedupe, precedence, credential
+redaction, CLI validation, engines importing cleanly) is sound; a green
+run on the real-capture fixture proves `extract_gridbox_products()`'s
+selectors match what the live site actually rendered, at least as of that
+capture date. It does NOT prove today's live site still looks the same —
+markup drifts; re-verify against TESTING.md before trusting an old green
+run indefinitely.
 
 Run directly: `python3 smoke_test.py`
 """
@@ -355,19 +359,18 @@ def _():
 # --------------------------------------------------------------------------- #
 # lidl_parser — URL building, sku, JSON-LD, __NEXT_DATA__, DOM fallback
 # --------------------------------------------------------------------------- #
-@check("search_url builds a /search/products/<query> URL, query takes priority over category")
+@check("search_url builds the confirmed-real /q/search?q=<query> URL, query takes priority over category")
 def _():
-    url = lp.search_url(query="whole milk", category="deadbeef")
-    assert url.startswith("https://www.lidl.com/search/products/")
-    assert "whole" in url and "milk" in url
+    url = lp.search_url(query="whole milk", category="food-wine/s10068374")
+    assert url.startswith("https://www.lidl.com/q/search?")
+    assert "q=whole" in url and "milk" in url
     assert lp.is_search_url(url)
 
 
-@check("search_url builds a /specials?category=<id> URL when no query is given")
+@check("search_url builds a confirmed-real /c/<slug>/s<id> category URL when no query is given")
 def _():
-    url = lp.search_url(category="be8072a237eb7908c193ee9175e2f8c87e48fe8b", zip_code="11803")
-    assert url.startswith("https://www.lidl.com/specials?")
-    assert "category=be8072a237eb7908c193ee9175e2f8c87e48fe8b" in url
+    url = lp.search_url(category="food-wine/s10068374", zip_code="11803")
+    assert url.startswith("https://www.lidl.com/c/food-wine/s10068374")
     assert "zip=11803" in url
     assert lp.is_search_url(url)
 
@@ -494,6 +497,59 @@ def _():
 def _():
     assert lp.count_result_cards(_DOM_FALLBACK_HTML) == 2
     assert lp.count_result_cards("<html><body>nothing here</body></html>") == 0
+
+
+_REAL_CAPTURE_FIXTURE = Path(__file__).resolve().parent / "tests" / "fixtures" / "lidl_search_real.html"
+
+
+@check("extract_gridbox_products parses the real 2026-09-20 capture fixture (data-gridbox-impression)")
+def _():
+    with open(_REAL_CAPTURE_FIXTURE, encoding="utf-8") as f:
+        html = f.read()
+    res = lp.parse_search_results(html)
+    assert res.source_used == "dom_gridbox", res.source_used
+    assert len(res.products) == 3, len(res.products)
+
+    by_sku = {p.sku: p for p in res.products}
+    cheese = by_sku["lidl-11244845"]
+    assert cheese.title == "Biazzo® whole milk mozzarella cheese"
+    assert cheese.brand == "BIAZZO®"
+    assert cheese.price == 3.69
+    assert cheese.unit_size == "16 oz."
+    assert cheese.unit_price == 0.23
+    assert cheese.product_url == "https://www.lidl.com/p/biazzo-whole-milk-mozzarella-cheese/p11244845"
+    assert "#" not in cheese.product_url, "the real #searchTrackingMasterId=... fragment must be stripped"
+
+    buttermilk = by_sku["lidl-11250439"]
+    assert buttermilk.brand == "PET®"
+    assert buttermilk.price == 2.87
+    assert buttermilk.unit_size == "64 fl.oz."
+    assert buttermilk.unit_price == 0.04
+
+    generic_milk = by_sku["lidl-11675058"]
+    assert generic_milk.title == "whole milk"
+    assert generic_milk.brand is None, "a private-label tile renders no brand element on the real site"
+    assert generic_milk.price == 3.30
+    assert generic_milk.unit_size == "128 fl.oz."
+    assert generic_milk.unit_price == 0.03
+
+    for p in res.products:
+        assert p.price_source == "dom"
+        assert p.currency == "USD"
+
+
+@check("extract_gridbox_products is what parse_search_results tries first (before JSON-LD)")
+def _():
+    # A page with BOTH a gridbox tile and an unrelated JSON-LD Product block
+    # must prefer the gridbox extraction — matches the real site, where the
+    # search-results page's own JSON-LD is Organization-only anyway (see
+    # lidl_parser.py's module docstring).
+    with open(_REAL_CAPTURE_FIXTURE, encoding="utf-8") as f:
+        gridbox_html = f.read()
+    combined = gridbox_html.replace("</body>", _JSON_LD_PRODUCT_HTML.split("<body>")[1])
+    res = lp.parse_search_results(combined)
+    assert res.source_used == "dom_gridbox"
+    assert len(res.products) == 3
 
 
 @check("safe_parse_search_results degrades a parse exception to an empty result, never raises")

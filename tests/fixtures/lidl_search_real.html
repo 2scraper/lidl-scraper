@@ -1,0 +1,99 @@
+<!--
+  Trimmed, hand-built fixture reproducing the REAL markup shape and REAL
+  values captured live from https://www.lidl.com/q/search?q=whole+milk and
+  https://www.lidl.com/q/search?q=milk on 2026-09-20, via an actual
+  rendered browser (not this repo's own fetch tooling — see lidl_parser.py's
+  module docstring and TESTING.md). Product names, brands, prices and unit
+  prices below are REAL values from that capture, not fictional (CLAUDE.md
+  section 15) — only the surrounding page chrome (nav, footer, unrelated
+  scripts) has been trimmed away, and tracking/session-specific query
+  params/ids have been simplified.
+
+  Confirmed-real structural facts this fixture encodes:
+    - product tiles are `.odsc-tile.product-grid-box` inside
+      `<li id="grid-item-{position}-{productId}">`
+    - each tile carries `data-gridbox-impression` as a URL-encoded JSON
+      blob with id/name/brand/category/price/position/sponsored
+    - visible price renders as "$X.XX*" (trailing footnote marker) in
+      `.ods-price__main-wrapper`
+    - unit size + per-unit price render concatenated with no separator
+      in `.ods-price__footer`, e.g. "16 oz.$ 0.23 per oz."
+    - the product link's real href carries a `#searchTrackingMasterId=...`
+      fragment that must be stripped for a stable product_url
+    - a private-label item (plain "whole milk") renders NO brand element
+      at all, unlike a branded item
+-->
+<html>
+<body>
+<section id="search-results" class="s-page__results">
+  <ol class="odsc-tile-grid odsc-tile-grid--variant-borderless s-product-grid" data-testselector="s-product-grid__list">
+    <li id="grid-item-0-11244845">
+      <div class="odsc-tile odsc-tile--variant-borderless product-grid-box" data-gridbox-impression="%7B%22id%22%3A%20%2211244845%22%2C%20%22name%22%3A%20%22Biazzo%5Cu00ae%20whole%20milk%20mozzarella%20cheese%22%2C%20%22brand%22%3A%20%22BIAZZO%5Cu00ae%22%2C%20%22category%22%3A%20%22Food%22%2C%20%22categoryPrimary%22%3A%20%22Food%22%2C%20%22price%22%3A%203.69%2C%20%22position%22%3A%201%2C%20%22sponsored%22%3A%20false%7D">
+        <a href="/p/biazzo-whole-milk-mozzarella-cheese/p11244845#searchTrackingMasterId=Product.11244845&searchTrackingPos=1">
+          <div class="odsc-tile__inner">
+            <div class="odsc-tile__content">
+              <div class="product-grid-box__content">
+                <div class="product-grid-box__brand">BIAZZO®</div>
+                <div class="product-grid-box__title">Biazzo® whole milk mozzarella cheese</div>
+                <div class="product-grid-box__price">
+                  <div class="price-wrapper">
+                    <div class="ods-price ods-price--variant-medium">
+                      <div class="ods-price__main-wrapper">$3.69*</div>
+                      <div class="ods-price__footer">16 oz.$ 0.23 per oz.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </li>
+    <li id="grid-item-1-11250439">
+      <div class="odsc-tile odsc-tile--variant-borderless product-grid-box" data-gridbox-impression="%7B%22id%22%3A%20%2211250439%22%2C%20%22name%22%3A%20%22PET%5Cu00ae%20whole%20buttermilk%22%2C%20%22brand%22%3A%20%22PET%5Cu00ae%22%2C%20%22category%22%3A%20%22Food%22%2C%20%22categoryPrimary%22%3A%20%22Food%22%2C%20%22price%22%3A%202.87%2C%20%22position%22%3A%202%2C%20%22sponsored%22%3A%20false%7D">
+        <a href="/p/pet-whole-buttermilk/p11250439#searchTrackingMasterId=Product.11250439&searchTrackingPos=2">
+          <div class="odsc-tile__inner">
+            <div class="odsc-tile__content">
+              <div class="product-grid-box__content">
+                <div class="product-grid-box__brand">PET®</div>
+                <div class="product-grid-box__title">PET® whole buttermilk</div>
+                <div class="product-grid-box__price">
+                  <div class="price-wrapper">
+                    <div class="ods-price ods-price--variant-medium">
+                      <div class="ods-price__main-wrapper">$2.87*</div>
+                      <div class="ods-price__footer">64 fl.oz.$ 0.04 per fl.oz.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </li>
+    <li id="grid-item-2-11675058">
+      <div class="odsc-tile odsc-tile--variant-borderless product-grid-box" data-gridbox-impression="%7B%22id%22%3A%20%2211675058%22%2C%20%22name%22%3A%20%22whole%20milk%22%2C%20%22brand%22%3A%20null%2C%20%22category%22%3A%20%22Food%22%2C%20%22categoryPrimary%22%3A%20%22Food%22%2C%20%22price%22%3A%203.3%2C%20%22position%22%3A%203%2C%20%22sponsored%22%3A%20false%7D">
+        <a href="/p/whole-milk/p11675058#searchTrackingMasterId=Product.11675058&searchTrackingPos=3">
+          <div class="odsc-tile__inner">
+            <div class="odsc-tile__content">
+              <div class="product-grid-box__content">
+                
+                <div class="product-grid-box__title">whole milk</div>
+                <div class="product-grid-box__price">
+                  <div class="price-wrapper">
+                    <div class="ods-price ods-price--variant-medium">
+                      <div class="ods-price__main-wrapper">$3.30*</div>
+                      <div class="ods-price__footer">128 fl.oz.$ 0.03 per fl.oz.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </li>
+  </ol>
+</section>
+</body>
+</html>

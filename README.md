@@ -17,48 +17,56 @@ exit codes, and family modules as `stockx-scraper` / `skyscanner-scraper`.
 
 ## Read this before trusting a run
 
-This repo's own build environment could reach lidl.com in a way neither
-prior family member's could — **robots.txt here is wide open**
-(`User-agent: *` / `Disallow:` empty), and `https://www.lidl.com`'s
-homepage fetched cleanly and confirms a real storefront (product
-categories, a "Weekly Deals" section, a Lidl Plus loyalty program). But
-that success didn't extend past the homepage:
+**Updated 2026-09-20 from a real, browser-rendered capture** (a real
+Chromium browser, not this repo's own earlier non-browser fetch attempts).
+Most of what used to be a guess here is now a confirmed fact:
 
-- Every deeper URL this session tried — a guessed
-  `/search/products/{query}`, a guessed `/specials?category=<hex-id>`
-  copied from a real Google-indexed lidl.com page, even `/sitemap.xml` —
-  returned a plain HTTP 404 to a non-browser fetch. No bot-challenge
-  marker was present in any of those 404s, unlike skyscanner-scraper's
-  PerimeterX incident — this looks like "a static fetch can't drive this
-  app's client-side router," not active blocking. Still unconfirmed
-  against a real, browser-rendered page.
-- Net effect: **the URL scheme lidl_parser.py builds is real** (confirmed
-  via Google's own index of live lidl.com pages, not invented), but the
-  exact query params, the embedded-JSON shape, every DOM selector, and
-  even the scroll-based pagination MODEL are best-effort guesses — each
-  marked `# TODO: verify live` in `lidl_parser.py`. The one partial
-  exception: the JSON-LD `Product`/`ItemList` extraction path is grounded
-  in schema.org's standard, documented e-commerce SEO markup, not a
-  lidl.com-specific guess — still unconfirmed whether lidl.com actually
-  emits it, but a reasonable first thing to check.
-- **Everything else — the architecture — is real and tested**: exit
-  codes, the output contract, dedupe, credential redaction, CLI
-  validation, all three engines importing cleanly, the crash-safety
-  wrapper around parsing. `smoke_test.py` proves all of that against
-  SYNTHETIC fixtures (see its own module docstring).
-- No engine has been run against the live site from any environment yet.
-  `TESTING.md` step 2 and the `canary-local` CI job (no secrets, on a
-  schedule) are what close that gap. If a real run comes back with zero
-  products, that's the **expected first-run outcome** for a parser nobody
-  has pointed at the real markup yet — not evidence the scraper is broken.
-  Open the `--dump-html` capture, compare it to `lidl_parser.py`, fix
-  what doesn't match, and you've turned a guess into this repo's first
-  actually-verified fact.
-- **Unconfirmed: how lidl.com keys a session to a store/zip.** US grocery
-  pricing is commonly region-scoped, but whether that's a cookie, a query
-  param, or a modal that must be dismissed first is unknown — `--zip`/
-  `--store-id` are accepted and recorded on every output row, but no
-  engine here has been confirmed to actually SET a region yet.
+- **The real search URL is `https://www.lidl.com/q/search?q=<query>`** —
+  not `/search/products/{query}`, which this repo guessed before and which
+  is confirmed WRONG (a real 404, seen side-by-side with the real request
+  succeeding in the same page load). Category browsing is
+  `/c/{slug}/s{numeric-id}`, also confirmed real, not the old
+  `/specials?category=<hex-id>` guess.
+- **The site runs on Nuxt.js**, not Next.js as previously guessed — the
+  old `__NEXT_DATA__` heuristic never matched anything real and is now a
+  documented dead end, kept only as a harmless no-op.
+- **The search-results page's own JSON-LD is `Organization` only** — no
+  `Product`/`ItemList` data lives there. An individual product-detail page
+  (`/p/{slug}/p{id}`) DOES have a real, clean schema.org `Product` block,
+  just not the listing page.
+- **The real primary data source for a listing is a DOM attribute**: each
+  result tile carries `data-gridbox-impression`, a URL-encoded JSON blob
+  with clean id/name/brand/category/price data — confirmed real, and now
+  `lidl_parser.py`'s primary extraction path (`extract_gridbox_products`).
+  Unit price/size come from the tile's visible price text alongside it.
+- **The "select your store" prompt did NOT block a real search** — a
+  plain query returned real, generically-priced results with no store/zip
+  ever set. The store/zip session-binding MECHANISM itself (cookie? query
+  param?) is still unconfirmed — `--zip`/`--store-id` are recorded on
+  every output row, but no engine here has been confirmed to actually SET
+  a region yet.
+- **No bot-challenge of any kind was hit on lidl.com** in this capture —
+  clean end to end, in contrast to skyscanner-scraper's sibling repo,
+  which served a real, immediate PerimeterX challenge in the same session.
+- **Still unconfirmed**: the exact markup of an actual discounted/
+  "weekly deal" tile (none was captured) — `original_price`/
+  `discount_pct`/`is_weekly_deal` extraction from a real tile is still a
+  best-effort guess; and whether scrolling alone ever loads results past
+  the first ~48 (the real UI has a "View More Products" button — unclear
+  if it's also triggered by scroll proximity, or needs an actual click).
+- **The architecture — exit codes, the output contract, dedupe,
+  credential redaction, CLI validation, all three engines importing
+  cleanly, the crash-safety wrapper around parsing — is real and tested**,
+  as before. `smoke_test.py` now also includes one fixture built from the
+  real capture above (`tests/fixtures/lidl_search_real.html`), not just
+  synthetic ones — see `smoke_test.py`'s own module docstring for which is
+  which.
+- This capture was done through a real browser, by hand, on one search
+  term (and one "milk" category browse) — it is not the same as a full
+  engine run (`playwright_scraper.py` etc.) completing end-to-end.
+  `TESTING.md` still has the checklist for that, and the discount/
+  pagination/store-binding gaps above are exactly what a real engine run
+  would help close next.
 
 ## Local-first
 

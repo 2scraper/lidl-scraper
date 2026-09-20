@@ -9,6 +9,51 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+### Fixed — 2026-09-20, corrected against a real browser capture
+- `lidl_parser.py`'s search URL was wrong: the real site uses
+  `/q/search?q=<query>`, not the originally-guessed
+  `/search/products/{query}` (confirmed via a real page load's network
+  log showing the guessed path 404 side-by-side with the real path
+  succeeding). Category browsing corrected to the confirmed-real
+  `/c/{slug}/s{numeric-id}`, replacing the guessed
+  `/specials?category=<hex-id>`.
+- The framework guess was wrong: lidl.com runs on **Nuxt.js**
+  (`__NUXT_DATA__`, `devalue`-serialized), not Next.js. The old
+  `__NEXT_DATA__`-walking heuristic never matched anything real; it's now
+  documented as a dead end and no longer part of the active parse chain
+  (kept only as a harmless no-op for hygiene).
+- The "JSON-LD first" strategy was half right: a real, clean schema.org
+  `Product` block DOES exist, but only on individual product-detail pages
+  (`/p/{slug}/p{id}`) — the search-RESULTS page's own JSON-LD is
+  `Organization` only. Added `extract_gridbox_products()` as the new
+  PRIMARY path for listings: the real site's `data-gridbox-impression`
+  DOM attribute (a URL-encoded, GA4-ecommerce-style JSON blob) plus
+  sibling visible-text elements for unit price/size — confirmed against a
+  real capture of `/q/search?q=whole+milk` and `/q/search?q=milk`.
+  `parse_search_results()`'s priority order is now: gridbox DOM attribute
+  → JSON-LD → generic DOM fallback (`__NEXT_DATA__` removed from the
+  active chain).
+- Added `tests/fixtures/lidl_search_real.html`, a trimmed fixture built
+  from the real capture (real product names/brands/prices/unit-prices for
+  Biazzo® mozzarella, PET® buttermilk, and a private-label "whole milk" —
+  not fictional), and a new `smoke_test.py` check against it. Corrected
+  the two `search_url()` smoke tests that encoded the old, now-disproven
+  URL scheme.
+- Confirmed live: the "select your store" prompt does not block a plain
+  search from returning results — resolves the open question this repo's
+  docs previously flagged about a possible blocking store-selection
+  modal. The actual store/zip session-binding mechanism remains
+  unconfirmed.
+- Re-confirmed (not new, but observed again live in the same session):
+  skyscanner-scraper's sibling repo still hits a real, immediate
+  PerimeterX bot challenge on skyscanner.com — unrelated to this repo's
+  own fixes, noted here only as the contrast (lidl.com showed no blocking
+  of any kind).
+- Still open: real markup for a discounted/"weekly deal" tile (none was
+  captured), and confirmation of whether scroll-only pagination reaches
+  results past the first ~48 or whether the real "View More Products"
+  button must be clicked.
+
 ### Added — initial build, third member of the 2scraper family
 - First build of `lidl-scraper`, following `stockx-scraper` and
   `skyscanner-scraper`'s established shape: three engine scripts

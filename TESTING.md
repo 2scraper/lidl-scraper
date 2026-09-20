@@ -1,19 +1,29 @@
 # Testing with real credentials and the live site
 
-Everything in this repo's own CHANGELOG/README was verified offline
-(`smoke_test.py`, SYNTHETIC fixture replay — see that file's module
-docstring). **No engine has ever been run against the live www.lidl.com,
-from any environment.** Unlike skyscanner-scraper — whose build
-environment couldn't even READ the site (robots.txt-restricted) — this
-repo's build environment fetched lidl.com's robots.txt (wide open) and
-homepage (a real e-commerce storefront) cleanly, but every deeper URL it
-tried (a guessed `/search/products/{query}`, a guessed `/specials?
-category=<hex-id>`, `/sitemap.xml`) returned a plain 404 to a non-browser
-fetch, with no bot-challenge marker present. That's most consistent with
-"a static fetch can't drive this app's client-side router," not active
-blocking — but it's still unconfirmed against a real rendered page. This
-file is the checklist for closing that gap for real, on a machine that
-can reach the site with an actual browser.
+**Update, 2026-09-20**: step 2 below — "check what the real page looks
+like" — has now been done once, manually, through a real Chromium browser
+(not an engine run). It found the original URL scheme and framework
+guesses wrong (see README's "Read this before trusting a run" and
+`lidl_parser.py`'s module docstring for the full, corrected picture) and
+`lidl_parser.py` has been updated to match what was actually seen, with a
+new real-capture fixture in `tests/fixtures/lidl_search_real.html`. What
+that manual pass did NOT do: run an actual engine (`playwright_scraper.py`
+etc.) end-to-end, confirm the discount/"weekly deal" markup shape, or
+confirm the store/zip session-binding mechanism. Everything below is
+still the checklist for closing those remaining gaps for real.
+
+Everything in this repo's own CHANGELOG/README not covered by the manual
+capture above was verified offline (`smoke_test.py`, mostly SYNTHETIC
+fixture replay — see that file's module docstring). **No engine has ever
+been run against the live www.lidl.com, from any environment.** Unlike
+skyscanner-scraper — whose build environment couldn't even READ the site
+(robots.txt-restricted) — this repo's own non-browser fetch tooling could
+reach lidl.com's robots.txt (wide open) and homepage cleanly, but every
+deeper URL it tried by plain fetch returned a 404; the manual browser
+capture above confirmed that was "a static fetch can't drive this app's
+client-side router," not active blocking — a real rendered browser had no
+trouble at all. This file is the checklist for closing the remaining gap
+(an actual engine run) for real.
 
 Run everything below from a normal terminal on your own machine — wherever
 this repo lives for you.
