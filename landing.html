@@ -177,12 +177,13 @@
       integration or public feed already covers your use case. This scraper is for everything outside that.
     </div>
     <div class="callout honest">
-      <strong>Read this before you rely on it:</strong> this project's own build tooling could reach
-      <code>lidl.com</code>'s <code>robots.txt</code> (wide open) and homepage cleanly, but every deeper page it
-      tried came back 404 to a plain, non-browser fetch — most likely because those routes are client-rendered,
-      not active blocking. The URL scheme is confirmed real; the exact selectors, embedded-data shape, and
-      pagination model are documented best-effort guesses pending a real, browser-rendered capture. The
-      architecture (exit codes, output schema, dedupe, all three engines) is real and tested. Full details in the
+      <strong>Read this before you rely on it:</strong> updated 2026-09-20 — the selectors and embedded-data
+      shape are no longer a guess. They're confirmed against a real, browser-rendered capture of
+      <code>lidl.com</code>, and <code>playwright_scraper.py</code> has now been run live end-to-end against the
+      real site (exit code 0, real products, prices that check out against their own unit prices). Two things are
+      still genuinely unconfirmed: a discounted/"weekly deal" tile's exact markup, and the store/zip
+      session-binding mechanism. The architecture (exit codes, output schema, dedupe, all three engines) is real
+      and tested, as it was before. Full details in the
       <a href="https://github.com/2scraper/lidl-scraper#readme">README</a> — read it first.
     </div>
   </section>

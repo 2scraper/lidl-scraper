@@ -14,7 +14,7 @@ Check Lidl's own site and the Lidl Plus app for anything a formal integration or
 
 ## Read this before you rely on it
 
-This project's own build tooling could reach lidl.com's `robots.txt` (wide open — no restriction) and its homepage (a real storefront), but every deeper page it tried came back 404 to a plain, non-browser fetch — most likely because those routes are client-rendered, not because of active blocking. The URL scheme this scraper builds is confirmed real (matched against Google's own index of live lidl.com pages); the exact selectors, embedded-data shape, and pagination model are documented best-effort guesses pending a real, browser-rendered capture. The architecture (exit codes, output schema, dedupe, credential handling, all three engines) is real and tested. Full honesty section in the [repository README](https://github.com/2scraper/lidl-scraper#readme) — read it before you point this at anything that matters.
+**Updated 2026-09-20**: the selectors and embedded-data shape below are no longer a guess — they're confirmed against a real, browser-rendered capture of lidl.com, and `playwright_scraper.py` has now been run live against the real site end-to-end (exit code 0, real products, prices that check out against their own unit prices). The real search URL is `https://www.lidl.com/q/search?q=<query>` (Nuxt.js, not Next.js as originally guessed); the primary data source is each result tile's `data-gridbox-impression` DOM attribute. Two things are still genuinely unconfirmed: the exact markup of a discounted/"weekly deal" tile (none has been captured yet), and the store/zip session-binding mechanism. The architecture (exit codes, output schema, dedupe, credential handling, all three engines) is real and tested, as it was before. Full honesty section, with the real captured facts and what's still open, in the [repository README](https://github.com/2scraper/lidl-scraper#readme) — read it before you point this at anything that matters.
 
 ## What you get
 
@@ -36,7 +36,7 @@ This project's own build tooling could reach lidl.com's `robots.txt` (wide open 
 
 ## Who this is for
 
-Grocery-price researchers, deal-tracking tools, and anyone who wants Lidl US search/weekly-deal results in a script rather than a browser tab — and is comfortable that this repo's parsing layer is a documented work in progress (see README).
+Grocery-price researchers, deal-tracking tools, and anyone who wants Lidl US search/weekly-deal results in a script rather than a browser tab. The core search/product parsing is now confirmed against a real, live run (see above) — weekly-deal/discount markup and store/zip selection are the two pieces still a documented work in progress (see README).
 
 ## Get started
 
