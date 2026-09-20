@@ -45,6 +45,18 @@ specifically.
 
 ## 2. The most important run you can do: check what the real page looks like
 
+**Update, 2026-09-20 (later the same day) — this step has now been done
+for real**: `python3 playwright_scraper.py --query "whole milk"
+--max-results 10 --format json --out /tmp/lidl_test.json` (no `--dump-
+html` needed that run, since it succeeded) landed on the FIRST outcome
+below — exit `0`, `"status": "complete"`, 8 real products,
+`price_confirmed_pct: 1.0`, plausible rows (see README "Read this before
+trusting a run" for a real example row). This is the first live run of
+the actual engine, not just a manual browser capture — the rest of this
+section stays as the general decision tree for whoever runs it next
+(a different query, a different day, after a site change), but "will this
+even work at all" is now answered: yes, confirmed live.
+
 This is the step nothing else in this repo could do for you:
 
 ```bash

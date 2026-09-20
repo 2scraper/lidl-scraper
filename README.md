@@ -48,6 +48,20 @@ Most of what used to be a guess here is now a confirmed fact:
 - **No bot-challenge of any kind was hit on lidl.com** in this capture —
   clean end to end, in contrast to skyscanner-scraper's sibling repo,
   which served a real, immediate PerimeterX challenge in the same session.
+- **Update, 2026-09-20 (later the same day) — the actual engine was run
+  live for the first time, not just a manual browser capture**:
+  `python3 playwright_scraper.py --query "whole milk" --max-results 10
+  --format json --out /tmp/lidl_test.json` against the real, live site —
+  exit code `0`, `"status": "complete"`, 8 real products,
+  `price_confirmed_pct: 1.0`. Real rows include `{"title": "Lactaid® whole
+  milk", "brand": "LACTAID®", "price": 6.38, "unit_price": 0.07,
+  "unit_size": "96 fl.oz.", "price_source": "dom"}` — the math checks out
+  (6.38 / 96 ≈ 0.07/oz) and the URL used
+  (`https://www.lidl.com/q/search?q=whole+milk`) matches the confirmed
+  real scheme above. This is the first time `extract_gridbox_products()`
+  has been exercised by the actual scraper, not a hand-driven browser
+  session — the single biggest remaining gap this repo had (see
+  `TESTING.md` step 2) is now closed.
 - **Still unconfirmed**: the exact markup of an actual discounted/
   "weekly deal" tile (none was captured) — `original_price`/
   `discount_pct`/`is_weekly_deal` extraction from a real tile is still a

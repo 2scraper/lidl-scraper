@@ -9,6 +9,21 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+### Verified live, 2026-09-20 (later the same day) — first real end-to-end engine run
+- `python3 playwright_scraper.py --query "whole milk" --max-results 10
+  --format json --out /tmp/lidl_test.json` run against the real, live
+  site (not a manual browser capture) for the first time: exit code `0`,
+  `.meta.json` `"status": "complete"`, `product_count: 8`,
+  `price_confirmed_pct: 1.0`. Real example row: `{"title": "Lactaid®
+  whole milk", "brand": "LACTAID®", "price": 6.38, "unit_price": 0.07,
+  "unit_size": "96 fl.oz.", "price_source": "dom", "product_url":
+  "https://www.lidl.com/p/lactaid-whole-milk/p11242918"}` — confirms
+  `extract_gridbox_products()` (added below, from the manual capture)
+  actually works when driven by the real engine, not just when replayed
+  against a hand-saved fixture. Closes the gap `TESTING.md` step 2 and
+  the README's honesty section both flagged: nothing had ever run the
+  actual scraper against lidl.com before this.
+
 ### Fixed — 2026-09-20, corrected against a real browser capture
 - `lidl_parser.py`'s search URL was wrong: the real site uses
   `/q/search?q=<query>`, not the originally-guessed
