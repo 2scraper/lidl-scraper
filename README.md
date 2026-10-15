@@ -70,7 +70,7 @@ Most of what used to be a guess here is now a confirmed fact:
   credential redaction, CLI validation, all three engines importing
   cleanly, and the shared crash-safety wrapper around parsing (a bad
   round degrades to "found nothing new," never a crash that discards
-  already-collected sibling rounds — CLAUDE.md §6/§10, same idiom as
+  already-collected sibling rounds — same idiom as
   skyscanner-scraper's `flight_parser.safe_parse_search_results`) — is
   real and tested**, as before. `smoke_test.py` now also includes one
   fixture built from the real capture above
@@ -117,7 +117,8 @@ python3 playwright_scraper.py --query "sourdough bread" --zip 11803 --max-result
 # a category path copied from lidl.com's own navigation
 python3 playwright_scraper.py --category food-wine/s10068374
 
-# a full lidl.com URL directly (escape hatch — bypasses --query/--category)
+# a full lidl.com URL directly (escape hatch — cannot be combined with
+# --query/--category; a typed --query/--category also wins over LIDL_URL)
 python3 playwright_scraper.py --url "https://www.lidl.com/q/search?q=milk"
 
 # with 2Captcha's Scraping Browser API (opt-in — see "Local-first" above)
@@ -168,7 +169,7 @@ guess at how region selection might work.
   skyscanner-scraper — a single scroll-based page has no independently-
   addressable units to parallelize or rotate an exit between.
   `proxy_pool.ProxyPool.worker_view()` is still ported verbatim per the
-  family's "copy the core, verbatim" rule (§7) and stays tested, for if a
+  family's "copy the core, verbatim" rule and stays tested, for if a
   future feature (e.g. running several search terms as a batch)
   introduces an actual parallelizable unit.
 
@@ -207,17 +208,28 @@ aisle/category lidl.com itself assigns, when available. `price_source` is
 produced the row — never a defaulted guess. `sample_output.json` and
 `sample_output.csv` are trimmed from the verified live Playwright run.
 
-**Exit codes**: `0` complete · `1` crash · `2` bad usage · `3` blocked ·
-`4` zero products (and nothing was written) · `5` remote API error · `6`
-partial. Every completed/partial run writes a `<out>.meta.json` sidecar
-with `status`, `pages_completed` (scroll rounds, here), `failed_pages` and
-`price_confirmed_pct` — **except** a failed/empty/blocked/remote-API-error
-run, which writes no sidecar and no output at all, so it can never
-overwrite a previous good run (`--allow-empty` opts out of the "don't
-write an empty result" half of that guard only — see `output_writer.
-finish_run`'s docstring for the exact precedence rule and why products
-being present never launders a blocked/remote-API-error run into
-"complete").
+**Exit codes**: `0` complete · `1` crash · `2` bad usage · `3` blocked
+(no rows) · `4` zero products, and nothing on the page says products exist ·
+`5` the content was never obtained (a navigation failure, a remote API/CDP
+error, or a served page whose own "N Products" counter states products
+while the parser recognised none) · `6` partial (rows were collected, then
+something failed or the grid came up short). Every completed/partial run
+writes a `<out>.meta.json` sidecar with `status`, `stop_reason` (why the
+run ended: `max_results`, `stalled`, `max_scrolls`, `incomplete_grid`, …),
+`pages_completed` (scroll rounds, here), `failed_pages`,
+`price_confirmed_pct` and `csv_cells_escaped`. An empty, blocked or
+never-obtained run writes no output and no sidecar, so it can never
+overwrite a previous good run (`--allow-empty` opts out of that). The one
+exception is a parser failure: its sidecar IS written (`status: failed`,
+`stop_reason: parser_found_nothing`, `output_written: false`) beside the
+untouched previous output, because "our selectors lost the rows" is
+something a consumer needs to see.
+
+Writes are atomic (a temp file in the same directory, renamed into place),
+so an interrupted run never leaves a truncated file. In CSV only, a text
+cell starting with `=`, `+`, `-`, `@`, a tab or a line break is prefixed
+with `'` so a spreadsheet does not execute it; JSON keeps the site's exact
+text, and the sidecar's `csv_cells_escaped` says how many cells differ.
 
 ## Pagination
 
@@ -263,13 +275,15 @@ site):
   hCaptcha/PerimeterX/DataDome wording), but nothing specific to how
   lidl.com's own block page (if one exists) reads has been captured yet.
   If you hit one, `TESTING.md` explains how to add it.
-- **Captcha token injection on a locally-launched browser is not
-  implemented**, same reason as the rest of the family: injecting a
-  solved token is widget/site-specific, and no real challenge from this
-  site was ever available to verify an injector against. Over
-  `--cdp-endpoint` (the Scraping Browser API), this doesn't matter —
-  2Captcha's own `Captcha.setAutoSolve` CDP domain handles it entirely
-  inside their infrastructure.
+- **This repo does not implement captcha token injection on a locally
+  launched browser**, so the local engines never BUY a solve: a challenge
+  is detected and reported (the run ends blocked, exit 3), and no 2Captcha
+  task is created, because a token nothing puts into the page cannot clear
+  it. Over `--cdp-endpoint` (the Scraping Browser API) the remote browser's
+  own `Captcha.setAutoSolve` solves inside its own infrastructure, which is
+  unaffected. If injection is added later, each page still gets at most one
+  paid solve (`captcha_solver.SOLVES_PER_PAGE`), shared by every scroll
+  round.
 - **How lidl.com keys a session to a store/zip is unconfirmed** — see
   "Read this before trusting a run" above. `--zip`/`--store-id` record
   intent and annotate output rows; they are not confirmed to change what

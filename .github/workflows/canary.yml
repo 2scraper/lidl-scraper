@@ -43,6 +43,11 @@ jobs:
           assert meta['pages_completed'] >= 3, meta
           assert meta['product_count'] >= 20, meta
           assert (meta['price_confirmed_pct'] or 0) >= 0.9, meta
+          rows = json.load(open('canary_out.json'))
+          assert len(rows) == meta['product_count'] >= 20, (len(rows), meta['product_count'])
+          for field in ('sku', 'title', 'product_url', 'price'):
+              missing = [r.get('sku') for r in rows if r.get(field) in (None, '')]
+              assert not missing, f'{field} is null on {len(missing)} of {len(rows)} rows'
           print(f\"canary: got {meta['product_count']} products in {meta['pages_completed']} rounds\")
           "
 
@@ -57,9 +62,10 @@ jobs:
             canary_out_debug.html
           retention-days: 14
 
-  # Opt-in, mirroring the rest of the family's pattern: exercises the
-  # --cdp-endpoint (2Captcha Scraping Browser API) path when a repo secret
-  # is configured. Skips cleanly — not red — when it isn't.
+  # Exercises the --cdp-endpoint (2Captcha Scraping Browser API) path. It
+  # needs the LIDL_CDP_ENDPOINT secret, and without it this job FAILS with
+  # an error naming the secret: a skipped job tests nothing and must not
+  # read as green. canary-local above tests the no-secret default path.
   canary-cdp:
     runs-on: ubuntu-latest
     env:
@@ -67,14 +73,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Skip — no LIDL_CDP_ENDPOINT secret configured
+      - name: Fail — no LIDL_CDP_ENDPOINT secret configured
         if: env.HAS_CDP != 'true'
         run: |
-          echo "::notice::Skipping the Scraping Browser API run: no LIDL_CDP_ENDPOINT \
-          secret is set. This is optional — canary-local above already exercises this repo's \
-          local-first default with no secrets at all. Set LIDL_CDP_ENDPOINT (and \
-          TWOCAPTCHA_KEY) as repo secrets to also turn this job on. This is a SKIP, not a pass \
-          or a fail."
+          echo "::error::canary-cdp cannot test the Scraping Browser API path: the \
+          LIDL_CDP_ENDPOINT repo secret is not set. Add it (a ws://… Scraping Browser \
+          endpoint) to make this job meaningful."
+          exit 1
 
       - uses: actions/setup-python@v5
         if: env.HAS_CDP == 'true'
@@ -93,8 +98,24 @@ jobs:
           LIDL_CDP_ENDPOINT: ${{ secrets.LIDL_CDP_ENDPOINT }}
           TWOCAPTCHA_KEY: ${{ secrets.TWOCAPTCHA_KEY }}
         run: |
+          set +e
           python3 playwright_scraper.py \
             --query "whole milk" --max-results 10 --format json --out canary_cdp_out.json --dump-html
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            echo "::error::playwright_scraper.py over --cdp-endpoint exited $code (3 blocked, 4 empty, 5 never obtained, 6 partial)"
+            exit 1
+          fi
+          python3 -c "
+          import json
+          meta = json.load(open('canary_cdp_out.json.meta.json'))
+          rows = json.load(open('canary_cdp_out.json'))
+          assert meta['status'] == 'complete', meta
+          assert len(rows) >= 5, len(rows)
+          assert all(r.get('sku') and r.get('title') and r.get('price') is not None for r in rows), 'null core field'
+          print(f'canary-cdp: {len(rows)} rows')
+          "
 
       - name: Upload artifacts on every non-skipped run
         if: always() && env.HAS_CDP == 'true'

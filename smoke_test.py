@@ -78,7 +78,7 @@ def asyncio_run_maybe(mod, args):
 
 
 # --------------------------------------------------------------------------- #
-# Engine import/CLI hygiene (CLAUDE.md §6)
+# Engine import/CLI hygiene
 # --------------------------------------------------------------------------- #
 @check("engines import cleanly regardless of installed drivers")
 def _():
@@ -100,7 +100,7 @@ def _():
         "cloud browser", "antidetect browser", "2scraper antidetect browser",
         "gate.2prx.com", "--antidetect", "antidetect_local_api",
     )
-    exempt_names = {"smoke_test.py", "CLAUDE.md"}
+    exempt_names = {"smoke_test.py"}
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
@@ -115,7 +115,7 @@ def _():
             assert phrase not in text, f"{path.relative_to(ROOT)}: contains banned phrase {phrase!r}"
 
 
-@check("all three engines expose the identical --flag set (CLAUDE.md §4)")
+@check("all three engines expose the identical --flag set")
 def _():
     def flag_set(mod):
         return {opt for a in mod.build_arg_parser()._actions for opt in a.option_strings if opt.startswith("--")}
@@ -152,7 +152,7 @@ def _():
 
 
 # --------------------------------------------------------------------------- #
-# output_writer — exit codes / precedence / dedupe (CLAUDE.md §9)
+# output_writer — exit codes / precedence / dedupe
 # --------------------------------------------------------------------------- #
 @check("exit codes and STATUS_BY_EXIT match the family contract exactly")
 def _():
@@ -170,8 +170,12 @@ def _mk_product(sku, price=3.49, **kw):
     return output_writer.Product(**defaults)
 
 
-@check("finish_run precedence: remote_api_error status is never laundered into 'complete' just because products were present")
+@check("finish_run precedence: rows followed by a remote error are PARTIAL (6), never 'complete'")
 def _():
+    # This check used to pin exit 5 for "rows, then a remote API error".
+    # The exit-code contract says 5 means the content was never obtained and
+    # 6 means rows were gathered and then something failed — a run holding
+    # rows is the second case, so it now pins 6 (stop_reason keeps the cause).
     with tempfile.TemporaryDirectory() as td:
         out = str(Path(td) / "out.json")
         code = output_writer.finish_run(
@@ -179,14 +183,11 @@ def _():
             pages_requested=1, pages_completed=1, failed_pages=None,
             blocked=True, remote_api_error=True, allow_empty=True, started_at=0.0,
         )
-        # Non-empty products means this is NOT the "zero-product outcome"
-        # the "write nothing" rule (CLAUDE.md §9) is about — the collected
-        # data legitimately gets written, but its STATUS must still say
-        # remote_api_error, never "complete".
-        assert code == output_writer.EXIT_REMOTE_API_ERROR
+        assert code == output_writer.EXIT_PARTIAL, code
         assert Path(out).exists(), "already-collected products must still be written out"
         meta = json.loads(Path(f"{out}.meta.json").read_text())
-        assert meta["status"] == "remote_api_error", meta["status"]
+        assert meta["status"] == "partial", meta["status"]
+        assert meta["stop_reason"] == "remote_api_error", meta["stop_reason"]
 
 
 @check("finish_run precedence: blocked+zero-products respects --allow-empty for WHETHER to write, never for the STATUS")
@@ -342,8 +343,15 @@ def _():
 # --------------------------------------------------------------------------- #
 @check("env_config.ENV_KEYS matches .env.example exactly, in both directions")
 def _():
+    import re as _re
     example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    documented = {line.split("=", 1)[0] for line in example.splitlines() if "=" in line and not line.startswith("#")}
+    # A variable may be shipped commented out (`# LIDL_URL=...`) so a copied
+    # .env.example does not set it — it is still documented.
+    documented = set()
+    for line in example.splitlines():
+        m = _re.match(r"^(?:#\s*)?([A-Z][A-Z0-9_]+)=", line)
+        if m:
+            documented.add(m.group(1))
     assert documented == set(env_config.ENV_KEYS), (documented, set(env_config.ENV_KEYS))
 
 
@@ -594,7 +602,7 @@ def _():
 
 @check("safe_parse_search_results degrades a bad round instead of crashing the whole run")
 def _():
-    # Family invariant (CLAUDE.md §6/§10): a parse-time exception on one
+    # Family invariant: a parse-time exception on one
     # round must degrade to an empty round, never propagate and crash the
     # multi-round scrape, discarding every product already collected in
     # earlier rounds. Reproduce a genuine parsing-time defect (not a caller
@@ -632,10 +640,10 @@ def _():
 
 @check("each engine: a malformed --proxy is EXIT_BAD_USAGE, not a crash, and writes nothing")
 def _():
-    # Best-effort, not a requirement that a driver be installed: CLAUDE.md
-    # §6 requires smoke_test.py to run cleanly with ZERO engine drivers
+    # Best-effort, not a requirement that a driver be installed: the family
+    # requires smoke_test.py to run cleanly with ZERO engine drivers
     # present (that's exactly what the "offline checks" CI job installs —
-    # requirements.txt only, per §16's dependency split), so this must not
+    # requirements.txt only, per the per-engine dependency split), so this must not
     # demand `exercised > 0`. "This particular engine wasn't skipped" is
     # already asserted independently, per engine, by tests.yml's own
     # engine-smoke jobs (see the "assert THIS engine did not skip" step) —
@@ -739,6 +747,590 @@ def _():
     client = scraper_api_client.TwoCaptchaClient("fakekey", api_base="https://mock.example.test")
     assert client.api_base == "https://mock.example.test"
     assert client.api_base != scraper_api_client.API_BASE
+
+
+# --------------------------------------------------------------------------- #
+# Output contract: atomic writes, file modes, CSV formula guard, exit matrix
+# --------------------------------------------------------------------------- #
+@check("atomic writes: a failure halfway through a write leaves the previous JSON, CSV and sidecar intact")
+def _():
+    import os as _os
+    with tempfile.TemporaryDirectory() as td:
+        for fmt in ("json", "csv"):
+            out = str(Path(td) / f"out.{fmt}")
+            output_writer.finish_run(
+                products=[_mk_product("a"), _mk_product("b")], out_path=out, fmt=fmt, engine="t", url="u",
+                pages_requested=1, pages_completed=1, failed_pages=None,
+                blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+            )
+            before = Path(out).read_bytes()
+            meta_before = Path(f"{out}.meta.json").read_bytes()
+
+            class Boom(Exception):
+                pass
+
+            orig_asdict = output_writer.asdict
+            calls = {"n": 0}
+
+            def failing_asdict(obj):
+                calls["n"] += 1
+                if calls["n"] == 2:
+                    raise Boom("disk full")
+                return orig_asdict(obj)
+
+            output_writer.asdict = failing_asdict
+            try:
+                output_writer.write_output([_mk_product("c"), _mk_product("d")], out, fmt)
+                raise AssertionError("the planted failure did not fire")
+            except Boom:
+                pass
+            finally:
+                output_writer.asdict = orig_asdict
+            assert Path(out).read_bytes() == before, f"{fmt}: a failed write truncated the previous good output"
+
+            orig_dumps = output_writer.json.dumps
+            output_writer.json.dumps = lambda *a, **k: (_ for _ in ()).throw(Boom("killed"))
+            try:
+                output_writer.write_meta(out, status="complete", stop_reason="x", engine="t", url="u",
+                                         pages_requested=1, pages_completed=1, product_count=0, started_at=0.0)
+                raise AssertionError("the planted sidecar failure did not fire")
+            except Boom:
+                pass
+            finally:
+                output_writer.json.dumps = orig_dumps
+            assert Path(f"{out}.meta.json").read_bytes() == meta_before, "a failed sidecar write truncated the sidecar"
+        leftovers = [n for n in _os.listdir(td) if n.endswith(".tmp")]
+        assert not leftovers, f"temp files left behind: {leftovers}"
+
+
+@check("atomic writes: a new file follows the umask (incl. 002), an existing file keeps its mode")
+def _():
+    import os as _os
+    import stat as _stat
+    with tempfile.TemporaryDirectory() as td:
+        for umask, expected in ((0o022, 0o644), (0o002, 0o664), (0o077, 0o600)):
+            old = _os.umask(umask)
+            try:
+                out = str(Path(td) / f"new{umask:o}.json")
+                output_writer.write_json([_mk_product("a")], out)
+            finally:
+                _os.umask(old)
+            got = _stat.S_IMODE(_os.stat(out).st_mode)
+            assert got == expected, f"umask {umask:o}: new file is {got:o}, expected {expected:o}"
+        out = str(Path(td) / "existing.csv")
+        Path(out).write_text("x")
+        _os.chmod(out, 0o640)
+        output_writer.write_csv([_mk_product("a")], out)
+        got = _stat.S_IMODE(_os.stat(out).st_mode)
+        assert got == 0o640, f"an existing file's mode changed to {got:o}"
+
+
+@check("CSV formula guard: text cells starting = + - @ TAB CR LF get a leading ', numbers and JSON do not")
+def _():
+    import csv as _csv
+    risky = _mk_product("a", title="=HYPERLINK(\"x\")", brand="+cmd", category="@SUM(A1)",
+                        unit_size="-2 oz", image_url="\tx", price=-5.0)
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "out.csv")
+        code = output_writer.finish_run(
+            products=[risky], out_path=out, fmt="csv", engine="t", url="u",
+            pages_requested=1, pages_completed=1, failed_pages=None,
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+            extra_meta={"site_note": "kept"},
+        )
+        assert code == output_writer.EXIT_OK
+        with open(out, newline="", encoding="utf-8") as f:
+            row = next(_csv.DictReader(f))
+        assert row["title"] == "'=HYPERLINK(\"x\")", row["title"]
+        assert row["brand"] == "'+cmd" and row["category"] == "'@SUM(A1)", (row["brand"], row["category"])
+        assert row["unit_size"] == "'-2 oz" and row["image_url"] == "'\tx"
+        assert row["price"] == "-5.0", f"a negative NUMBER must stay a number: {row['price']!r}"
+        meta = json.loads(Path(f"{out}.meta.json").read_text())
+        assert meta["csv_cells_escaped"] == 5, meta.get("csv_cells_escaped")
+        assert meta["site_note"] == "kept"
+
+        out_j = str(Path(td) / "out.json")
+        output_writer.finish_run(
+            products=[risky], out_path=out_j, fmt="json", engine="t", url="u",
+            pages_requested=1, pages_completed=1, failed_pages=None,
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+            extra_meta={"csv_cells_escaped": "caller wins"},
+        )
+        data = json.loads(Path(out_j).read_text())
+        assert data[0]["title"] == "=HYPERLINK(\"x\")", "JSON must keep the site's exact text"
+        meta_j = json.loads(Path(f"{out_j}.meta.json").read_text())
+        assert meta_j["csv_cells_escaped"] == "caller wins", "housekeeping must merge UNDER the caller's extra"
+
+
+@check("exit matrix: a served page that states rows but parses to none is 5 with a sidecar; rows then a block is 6")
+def _():
+    with tempfile.TemporaryDirectory() as td:
+        out = str(Path(td) / "out.json")
+        Path(out).write_text("[\"previous good run\"]")
+        code = output_writer.finish_run(
+            products=[], out_path=out, fmt="json", engine="t", url="u",
+            pages_requested=1, pages_completed=1, failed_pages=None,
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+            parser_failed=True, stop_reason="parser_found_nothing",
+        )
+        assert code == output_writer.EXIT_NOT_OBTAINED == 5, code
+        assert Path(out).read_text() == "[\"previous good run\"]", "a parser failure must not touch the previous output"
+        meta = json.loads(Path(f"{out}.meta.json").read_text())
+        assert meta["stop_reason"] == "parser_found_nothing" and meta["status"] == "failed", meta
+        assert meta["output_written"] is False and meta["product_count"] == 0
+
+        out2 = str(Path(td) / "rows_then_block.json")
+        code = output_writer.finish_run(
+            products=[_mk_product("a")], out_path=out2, fmt="json", engine="t", url="u",
+            pages_requested=1, pages_completed=1, failed_pages=None,
+            blocked=True, remote_api_error=False, allow_empty=False, started_at=0.0,
+        )
+        assert code == output_writer.EXIT_PARTIAL, code
+        assert json.loads(Path(f"{out2}.meta.json").read_text())["stop_reason"] == "blocked"
+
+        out3 = str(Path(td) / "empty.json")
+        code = output_writer.finish_run(
+            products=[], out_path=out3, fmt="json", engine="t", url="u",
+            pages_requested=1, pages_completed=1, failed_pages=[2],
+            blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0,
+        )
+        assert code == output_writer.EXIT_ZERO_PRODUCTS, "a page that states nothing and yields nothing is empty"
+
+
+@check("end_of_run: Lidl's own counter with zero parsed rows is parser_found_nothing; a short grid is incomplete")
+def _():
+    import run_policy
+    counter = '<span class="s-products-count__label">142 Products</span>'
+    reason, shortfall, parser_failed = run_policy.end_of_run(
+        final_html=counter, collected=0, max_results=30, blocked=False,
+        loop_reason=run_policy.STOP_STALLED, scroll_failed=True)
+    assert (reason, parser_failed) == (run_policy.STOP_PARSER_FOUND_NOTHING, True), reason
+    reason, shortfall, parser_failed = run_policy.end_of_run(
+        final_html=counter, collected=12, max_results=30, blocked=False,
+        loop_reason=run_policy.STOP_STALLED, scroll_failed=False)
+    assert (reason, shortfall, parser_failed) == (run_policy.STOP_INCOMPLETE_GRID, True, False)
+    reason, shortfall, parser_failed = run_policy.end_of_run(
+        final_html="<html><body>no counter</body></html>", collected=0, max_results=30, blocked=False,
+        loop_reason=run_policy.STOP_STALLED, scroll_failed=False)
+    assert (reason, parser_failed) == (run_policy.STOP_STALLED, False)
+
+
+# --------------------------------------------------------------------------- #
+# Paid captcha solves: one allowance per page, and nothing bought that is
+# never used
+# --------------------------------------------------------------------------- #
+_CAPTCHA_PAGE = '<html><body><div class="g-recaptcha" data-sitekey="6Lc_stub_sitekey"></div></body></html>'
+
+
+class _StubSolver:
+    """Stands in for TwoCaptchaClient. Never touches the network."""
+    instances = []
+
+    def __init__(self, *a, **k):
+        self.purchases = 0
+        _StubSolver.instances.append(self)
+
+    def solve_and_wait(self, task):
+        self.purchases += 1
+        return "stub-token"
+
+
+@check("solve_when_blocked buys nothing it cannot inject, and at most one solve per page budget")
+def _():
+    client = _StubSolver()
+    budget = captcha_solver.SolveBudget()
+    for _round in range(6):
+        res = captcha_solver.solve_when_blocked(
+            client=client, page_url="u", html=_CAPTCHA_PAGE, count_product_links=lambda h: 0,
+            budget=budget, can_inject=False)
+        assert res["action"] == "detected_not_injectable", res
+    assert client.purchases == 0, f"{client.purchases} tokens bought that nothing injects"
+    budget = captcha_solver.SolveBudget()
+    actions = [captcha_solver.solve_when_blocked(
+        client=client, page_url="u", html=_CAPTCHA_PAGE, count_product_links=lambda h: 0,
+        budget=budget, can_inject=True)["action"] for _ in range(6)]
+    assert client.purchases == 1, f"one page bought {client.purchases} solves"
+    assert actions[0] == "solved" and set(actions[1:]) == {"budget_exhausted"}, actions
+    import run_policy
+    assert run_policy.LOCAL_ENGINES_INJECT_TOKEN is False, (
+        "no engine injects a token: enabling purchases needs an injector first")
+
+
+# Fake drivers: enough of each driver's surface for one scrape_search() run,
+# serving fixed HTML. Lets the whole engine path (navigation, scroll loop,
+# captcha step, end-of-run decision, finish_run) run with no browser.
+class _FakeResponse:
+    def __init__(self, status):
+        self.status = status
+
+
+class _PWLocator:
+    @property
+    def first(self):
+        return self
+
+    async def count(self):
+        return 0
+
+
+class _PWPage:
+    def __init__(self, html):
+        self.html = html
+
+    async def goto(self, *a, **k):
+        return _FakeResponse(200)
+
+    async def wait_for_timeout(self, ms):
+        return None
+
+    async def content(self):
+        return self.html
+
+    async def evaluate(self, js, *a):
+        return 1000 if "scrollHeight" in js else None
+
+    def locator(self, sel):
+        return _PWLocator()
+
+
+class _PWBrowser:
+    def __init__(self, html):
+        self.html = html
+
+    async def new_context(self, **kw):
+        browser = self
+
+        class Ctx:
+            async def new_page(self):
+                return _PWPage(browser.html)
+
+            async def close(self):
+                return None
+        return Ctx()
+
+    async def close(self):
+        return None
+
+
+def _fake_async_playwright(html):
+    class Chromium:
+        async def launch(self, **kw):
+            return _PWBrowser(html)
+
+    class PW:
+        chromium = Chromium()
+
+    class CM:
+        async def __aenter__(self):
+            return PW()
+
+        async def __aexit__(self, *a):
+            return False
+    return lambda: CM()
+
+
+class _PPPage:
+    def __init__(self, html):
+        self.html = html
+
+    async def goto(self, *a, **k):
+        return _FakeResponse(200)
+
+    async def content(self):
+        return self.html
+
+    async def evaluate(self, js, *a):
+        return 1000 if "scrollHeight" in js else None
+
+    async def querySelector(self, sel):
+        return None
+
+    async def setUserAgent(self, ua):
+        return None
+
+
+class _PPBrowser:
+    def __init__(self, html):
+        self.html = html
+
+    async def newPage(self):
+        return _PPPage(self.html)
+
+    async def close(self):
+        return None
+
+
+class _SEDriver:
+    def __init__(self, html):
+        self.page_source = html
+
+    def set_page_load_timeout(self, s):
+        pass
+
+    def get(self, url):
+        pass
+
+    def execute_script(self, js, *a):
+        if "responseStatus" in js:
+            return 200
+        return 1000 if "scrollHeight" in js else None
+
+    def find_elements(self, *a):
+        return []
+
+    def quit(self):
+        pass
+
+
+def _drive_engine(name, html, extra_args=()):
+    """Run one engine's real run() against fake driver serving `html`.
+    Returns (exit_code, purchases, meta_or_None, out_path_exists)."""
+    mod = {"playwright": playwright_scraper, "selenium": selenium_scraper, "puppeteer": puppeteer_scraper}[name]
+    saved = {}
+
+    def patch(attr, value):
+        saved[attr] = getattr(mod, attr)
+        setattr(mod, attr, value)
+
+    _StubSolver.instances.clear()
+    patch("TwoCaptchaClient", _StubSolver)
+    if name == "playwright":
+        patch("async_playwright", _fake_async_playwright(html))
+    elif name == "selenium":
+        patch("webdriver", object())
+        patch("_build_driver", lambda **kw: _SEDriver(html))
+        patch("READINESS_WAIT_S", 0)
+    else:
+        async def _launch(**kw):
+            return _PPBrowser(html)
+        patch("pyppeteer_launch", object())
+        patch("_launch", _launch)
+        patch("READINESS_WAIT_S", 0)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "out.json")
+            args = mod.build_arg_parser().parse_args([
+                "--query", "milk", "--out", out, "--scroll-delay", "0", "--retry-delay", "0",
+                "--twocaptcha-key", "stub-not-a-key", *extra_args,
+            ])
+            code = asyncio_run_maybe(mod, args)
+            meta_path = Path(f"{out}.meta.json")
+            meta = json.loads(meta_path.read_text()) if meta_path.exists() else None
+            purchases = sum(c.purchases for c in _StubSolver.instances)
+            return code, purchases, meta, Path(out).exists()
+    finally:
+        for attr, value in saved.items():
+            setattr(mod, attr, value)
+
+
+@check("each engine: a captcha page with a key set buys NO solve across every scroll round, and exits 3")
+def _():
+    for name in ("playwright", "selenium", "puppeteer"):
+        code, purchases, meta, wrote = _drive_engine(name, _CAPTCHA_PAGE, ["--max-scrolls", "20", "--stall-rounds", "20"])
+        assert purchases == 0, f"{name}: {purchases} paid solves for one page, none of them injected"
+        assert code == output_writer.EXIT_BLOCKED, f"{name}: exit {code}"
+        assert not wrote and meta is None
+
+
+@check("each engine: Lidl's counter stating products with none parsed exits 5 with a parser_found_nothing sidecar")
+def _():
+    lost = ('<html><body><span class="s-products-count__label">142 Products</span>'
+            '<div class="renamed-tile"><a href="/p/x/p1">x</a></div></body></html>')
+    for name in ("playwright", "selenium", "puppeteer"):
+        code, purchases, meta, wrote = _drive_engine(name, lost)
+        assert code == 5, f"{name}: a selector break reported as exit {code}"
+        assert meta and meta["stop_reason"] == "parser_found_nothing", f"{name}: sidecar {meta}"
+        assert not wrote
+
+
+@check("each engine: the real capture fixture still parses through the whole run to exit 0")
+def _():
+    html = _REAL_CAPTURE_FIXTURE.read_text(encoding="utf-8")
+    for name in ("playwright", "selenium", "puppeteer"):
+        code, purchases, meta, wrote = _drive_engine(name, html, ["--max-results", "3"])
+        assert code == output_writer.EXIT_OK, f"{name}: exit {code}"
+        assert meta["product_count"] == 3 and meta["stop_reason"] == "max_results", meta
+
+
+@check("each engine creates the solve budget ONCE per page, outside the scroll and retry loops")
+def _():
+    import ast as _ast
+    for path in ("playwright_scraper.py", "selenium_scraper.py", "puppeteer_scraper.py"):
+        tree = _ast.parse((ROOT / path).read_text(encoding="utf-8"))
+        fn = next(n for n in _ast.walk(tree)
+                  if isinstance(n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and n.name == "scrape_search")
+        creations = [n for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+                     and getattr(n.func, "id", None) == "SolveBudget"]
+        assert len(creations) == 1, f"{path}: {len(creations)} SolveBudget() calls in scrape_search"
+        for loop in (n for n in _ast.walk(fn) if isinstance(n, (_ast.For, _ast.While))):
+            inside = {id(c) for c in _ast.walk(loop)}
+            assert id(creations[0]) not in inside, f"{path}: the budget is re-created inside a loop"
+        solve_calls = [n for n in _ast.walk(fn) if isinstance(n, _ast.Call)
+                       and getattr(n.func, "id", None) == "_maybe_solve_captcha"]
+        assert solve_calls and all(any(k.arg == "budget" for k in c.keywords) for c in solve_calls), (
+            f"{path}: a captcha call site without the page budget")
+
+
+# --------------------------------------------------------------------------- #
+# CLI: numeric validators shared by all engines; LIDL_URL never hijacks a
+# typed --query
+# --------------------------------------------------------------------------- #
+@check("each engine rejects a negative --retries/--retry-delay/--scroll-delay/--proxy-block-retries with exit 2 naming the flag")
+def _():
+    import contextlib as _cl
+    import io as _io
+    for mod in (playwright_scraper, selenium_scraper, puppeteer_scraper):
+        for flag in ("--retries", "--retry-delay", "--scroll-delay", "--proxy-block-retries"):
+            err = _io.StringIO()
+            try:
+                with _cl.redirect_stderr(err):
+                    mod.build_arg_parser().parse_args(["--query", "milk", flag, "-1"])
+                raise AssertionError(f"{mod.__name__}: {flag} -1 accepted")
+            except SystemExit as exc:
+                assert exc.code == 2, (mod.__name__, flag, exc.code)
+            assert f"argument {flag}" in err.getvalue(), f"{mod.__name__}: error does not name {flag}"
+
+
+@check("every numeric flag uses the same validator in all three engines")
+def _():
+    def types(mod):
+        return {a.option_strings[0]: getattr(a.type, "__name__", None)
+                for a in mod.build_arg_parser()._actions if a.option_strings and a.type is not None}
+    pw, se, pu = types(playwright_scraper), types(selenium_scraper), types(puppeteer_scraper)
+    assert pw == se == pu, {"playwright": pw, "selenium": se, "puppeteer": pu}
+    assert "int" not in pw.values() and "float" not in pw.values(), f"an unvalidated numeric flag: {pw}"
+
+
+@check("a LIDL_URL from the environment does not override a typed --query; a typed --url with --query is refused")
+def _():
+    import os as _os
+    import run_policy
+    _os.environ["LIDL_URL"] = "https://www.lidl.com/q/search?q=FROM_ENV"
+    try:
+        for mod in (playwright_scraper, selenium_scraper, puppeteer_scraper):
+            args = mod.build_arg_parser().parse_args(["--query", "typed-query"])
+            env_config.apply_env(args, dotenv_path="/nonexistent/.env")
+            url = run_policy.resolve_start_url(args)
+            assert "typed-query" in url and "FROM_ENV" not in url, f"{mod.__name__}: {url}"
+            args = mod.build_arg_parser().parse_args([])
+            env_config.apply_env(args, dotenv_path="/nonexistent/.env")
+            assert "FROM_ENV" in run_policy.resolve_start_url(args), "LIDL_URL alone must still work"
+    finally:
+        del _os.environ["LIDL_URL"]
+    args = playwright_scraper.build_arg_parser().parse_args(["--url", "https://www.lidl.com/x", "--query", "milk"])
+    try:
+        run_policy.resolve_start_url(args)
+        raise AssertionError("a typed --url with --query was accepted")
+    except run_policy.UsageError:
+        pass
+    example = (ROOT / ".env.example").read_text(encoding="utf-8")
+    assert not any(line.startswith("LIDL_URL=") for line in example.splitlines()), (
+        ".env.example must ship LIDL_URL commented out")
+
+
+# --------------------------------------------------------------------------- #
+# diff_runs comparability
+# --------------------------------------------------------------------------- #
+@check("diff_runs refuses runs from different regions or URLs, and JSON vs CSV of one run diffs as unchanged")
+def _():
+    with tempfile.TemporaryDirectory() as td:
+        def save(name, url, fmt="json", **kw):
+            out = str(Path(td) / f"{name}.{fmt}")
+            output_writer.finish_run(
+                products=[_mk_product("a", price=3.3, **kw)], out_path=out, fmt=fmt, engine="t", url=url,
+                pages_requested=1, pages_completed=1, failed_pages=None,
+                blocked=False, remote_api_error=False, allow_empty=False, started_at=0.0)
+            return out
+        a = save("a", "u", zip_code="10001")
+        b = save("b", "u", zip_code="90210")
+        c = save("c", "other-url", zip_code="10001")
+        for other in (b, c):
+            try:
+                diff_runs.diff(a, other)
+                raise AssertionError(f"diff of {other} was not refused")
+            except SystemExit:
+                pass
+        j, k = save("j", "u", "json", zip_code="10001"), save("k", "u", "csv", zip_code="10001")
+        result = diff_runs.diff(j, k)
+        assert result["changed"] == [] and result["source_changed"] == [], result
+
+
+# --------------------------------------------------------------------------- #
+# Credential scan and public-text hygiene
+# --------------------------------------------------------------------------- #
+def _load_ci_checks():
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("ci_checks", ROOT / ".github" / "ci_checks.py")
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@check("credential scan: the repo is clean, and planted keys in .env backups, unquoted, bare or as URLs are caught")
+def _():
+    if not (ROOT / ".github").is_dir():
+        return  # the Docker image ships no CI material at all; CI runs this check
+    ci = _load_ci_checks()
+    count, findings = ci.scan(ROOT)
+    assert count > 10, f"the scan read only {count} files"
+    assert not findings, findings
+    hexkey = "ab" * 16
+    plants = {
+        ".env.bak": f"TWOCAPTCHA_KEY={hexkey}\n",
+        ".env.local": "LIDL_PROXY=http://" + "realuser:realpw9" + "@gw.proxyhost.net:2334\n",
+        "leak_bare.py": f"KEY = {hexkey}\n",
+        "leak_unquoted.env": "api_key=" + "Zx9" * 8 + "\n",
+        "fixture.json": "\"<script>{\\\"apiKey\\\": \\\"" + "Q7w" * 8 + "\\\"}</script>\"\n",
+    }
+    with tempfile.TemporaryDirectory() as td:
+        # a parent directory named like a build/output dir must not hide the repo
+        root = Path(td) / "tmp" / "build" / "out" / "repo"
+        root.mkdir(parents=True)
+        (root / "clean.py").write_text("print('hello')\n")
+        venv = root / "myenv"
+        (venv / "lib").mkdir(parents=True)
+        (venv / "pyvenv.cfg").write_text("home = /usr\n")
+        (venv / "lib" / "vendored.py").write_text(f"X = '{hexkey}'\n")
+        (root / ".env").write_text(f"TWOCAPTCHA_KEY={hexkey}\n")
+        count, findings = ci.scan(root)
+        assert count == 1 and not findings, (count, findings)  # clean.py only: .env and the venv are skipped
+        for name, text in plants.items():
+            (root / name).write_text(text)
+        count, findings = ci.scan(root)
+        hit = {f.split(":", 1)[0] for f in findings}
+        assert hit == set(plants), f"caught {sorted(hit)}, planted {sorted(plants)}"
+        assert all(hexkey not in f for f in findings), "a finding printed the secret itself"
+
+
+@check("tests.yml runs the shared credential scan instead of its own grep")
+def _():
+    wf = ROOT / ".github" / "workflows" / "tests.yml"
+    if not (ROOT / ".github").is_dir():
+        return
+    text = wf.read_text(encoding="utf-8")
+    assert "ci_checks.py --secret-check" in text, "tests.yml does not call .github/ci_checks.py"
+    assert "grep -rnE" not in text, "tests.yml carries its own credential grep again"
+
+
+@check("no shipped file cites private maintainer notes or their section numbers")
+def _():
+    import re as _re
+    _SEC = chr(0xA7)  # the section sign, built so this file does not match itself
+    banned = [
+        "CLAUDE" + ".md", "claude_" + "2scraper", "2scraper_" + "repo_rules",
+        "play" + "book " + _SEC, "temp" + "late " + _SEC,
+    ]
+    section = _re.compile(_SEC + r"\s*\d")
+    for path in ROOT.rglob("*"):
+        rel = path.relative_to(ROOT)
+        if not path.is_file() or any(p in (".git", "__pycache__") for p in rel.parts):
+            continue
+        if any((ROOT / Path(*rel.parts[:i]) / "pyvenv.cfg").exists() for i in range(1, len(rel.parts))):
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for token in banned:
+            assert token not in text, f"{rel}: cites {token!r}"
+        assert not section.search(text), f"{rel}: a bare section-number citation"
 
 
 def run() -> int:

@@ -2,8 +2,7 @@
 """playwright_scraper.py — Playwright engine for the lidl-scraper family
 member. Playwright is the primary engine (see selenium_scraper.py /
 puppeteer_scraper.py for parity copies — all three must agree on exit
-codes, run status and whether a run crashes or spends money — CLAUDE.md
-§4).
+codes, run status and whether a run crashes or spends money).
 
 **Local-first, same principle as every other family member**: this
 launches an ordinary local headless Chromium by default and does NOT
@@ -47,7 +46,8 @@ else:
 
 import env_config
 import lidl_parser as lp
-from captcha_solver import detect_from_html, solve_when_blocked
+import run_policy as rp
+from captcha_solver import SolveBudget, detect_from_html
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, Product, finish_run, sku_key as _sku_key
 from proxy_pool import Proxy, ProxyPool, ProxyParseError, is_proxy_dead_error, load_proxies, redact_credentials
@@ -55,35 +55,12 @@ from scraper_api_client import TwoCaptchaClient
 
 ENGINE_NAME = "playwright"
 
-# --- the handful of engine constants that vary per site (CLAUDE.md §5) ---
+# --- the handful of engine constants that vary per site ---
 NAV_TIMEOUT_MS = 30_000
 READINESS_WAIT_MS = 3_000
-                            # content (see lidl_parser.py docstring); assumed client-rendered
-                            # here too pending a real capture.
 MIN_CARD_MATCHES = lp.MIN_CARD_MATCHES
 
 log = logging.getLogger("playwright_scraper")
-
-
-def _positive_int(value: str) -> int:
-    ivalue = int(value)
-    if ivalue < 1:
-        raise argparse.ArgumentTypeError(f"must be a positive integer (got {value!r})")
-    return ivalue
-
-
-def _nonnegative_int(value: str) -> int:
-    ivalue = int(value)
-    if ivalue < 0:
-        raise argparse.ArgumentTypeError(f"must be >= 0 (got {value!r})")
-    return ivalue
-
-
-def _nonnegative_float(value: str) -> float:
-    fvalue = float(value)
-    if fvalue < 0:
-        raise argparse.ArgumentTypeError(f"must be >= 0 (got {value!r})")
-    return fvalue
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -91,31 +68,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="lidl.com grocery product scraper — Playwright engine",
         epilog="Credentials belong in .env / LIDL_PROXY / TWOCAPTCHA_KEY — never on this command line.",
     )
-    p.add_argument("--url", default=None, help="Full lidl.com search/specials URL (or set LIDL_URL) — overrides --query/--category")
+    p.add_argument("--url", default=None, help="Full lidl.com search/specials URL (or set LIDL_URL). Cannot be combined with --query/--category; a typed --query/--category wins over LIDL_URL")
     p.add_argument("--query", default=None, help="Product search term, e.g. 'whole milk'")
     p.add_argument("--category", default=None, help="A category path copied from Lidl navigation, e.g. food-wine/s10068374")
     p.add_argument("--zip", dest="zip_code", default=None, help="US zip code for store/region pricing (mechanism unconfirmed — see lidl_parser.py docstring)")
     p.add_argument("--store-id", default=None, help="Recorded on output rows only — no confirmed way yet to select a store by id directly (see README)")
     p.add_argument("--sort", choices=lp.SORT_VALUES, default="relevance")
-    p.add_argument("--max-results", type=_positive_int, default=30, help="Cap on number of products scraped")
-    p.add_argument("--max-scrolls", type=_positive_int, default=20, help="Hard cap on scroll rounds, independent of --stall-rounds")
-    p.add_argument("--stall-rounds", type=_positive_int, default=4, help="Stop after this many consecutive scrolls add no new product")
-    p.add_argument("--scroll-delay", type=_nonnegative_float, default=1.5, help="Delay between scroll rounds, seconds")
+    p.add_argument("--max-results", type=rp.positive_int, default=30, help="Cap on number of products scraped")
+    p.add_argument("--max-scrolls", type=rp.positive_int, default=20, help="Hard cap on scroll rounds, independent of --stall-rounds")
+    p.add_argument("--stall-rounds", type=rp.positive_int, default=4, help="Stop after this many consecutive scrolls add no new product")
+    p.add_argument("--scroll-delay", type=rp.nonnegative_float, default=1.5, help="Delay between scroll rounds, seconds")
     p.add_argument("--format", choices=["json", "csv"], default="json")
     p.add_argument("--out", default=None, help="Output path (default: lidl_results.<format>)")
-    p.add_argument("--retries", type=_nonnegative_int, default=2, help="Retries on initial navigation failure")
-    p.add_argument("--retry-delay", type=_nonnegative_float, default=3.0)
+    p.add_argument("--retries", type=rp.nonnegative_int, default=2, help="Retries on initial navigation failure")
+    p.add_argument("--retry-delay", type=rp.nonnegative_float, default=3.0)
     p.add_argument("--proxy", default=None, help="A single proxy, e.g. http://login:pass@host:port (or set LIDL_PROXY)")
     p.add_argument("--proxy-file", default=None, help="One proxy per line, same formats as --proxy")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=3)
+    p.add_argument("--proxy-block-retries", type=rp.nonnegative_int, default=3)
     p.add_argument("--twocaptcha-key", default=None, help="(or set TWOCAPTCHA_KEY)")
     p.add_argument("--captcha-api", default=None, help="Override the 2Captcha API base URL (testing only)")
     p.add_argument("--solve-captcha", choices=["off", "when-blocked", "always"], default="when-blocked")
-    p.add_argument("--min-score", type=float, default=0.3, help="Minimum acceptable reCAPTCHA v3 score (2Captcha's minScore task field)")
+    p.add_argument("--min-score", type=rp.unit_float, default=0.3, help="Minimum acceptable reCAPTCHA v3 score (2Captcha's minScore task field)")
     p.add_argument("--cdp-endpoint", default=None, help="Connect to a remote CDP session (e.g. the 2Captcha Scraping Browser API) instead of launching locally (or set LIDL_CDP_ENDPOINT) — opt-in, not required for a normal run")
     p.add_argument("--fingerprint", action="store_true", help="Fetch and apply a 2Captcha Fingerprint API profile (ignored with --cdp-endpoint — see fingerprint_client.refuse_if_cdp)")
-    p.add_argument("--fp-tags", default=None, help="Fingerprint API filter, e.g. 'Windows,Chrome'")
+    p.add_argument("--fp-tags", default=None, help="Fingerprint API filter: ONE OS-family tag, e.g. 'Windows'")
     p.add_argument("--fp-country", default=None, help="Fingerprint API filter, e.g. 'us'")
     p.add_argument("--allow-empty", action="store_true", help="Write output even if zero products were found")
     p.add_argument("--dump-html", action="store_true", help="Save the final accumulated page HTML next to --out, on success too")
@@ -129,11 +106,7 @@ def _default_out(fmt: str) -> str:
 
 
 def _resolve_start_url(args: argparse.Namespace) -> Optional[str]:
-    if args.url:
-        return args.url
-    if args.query or args.category:
-        return lp.search_url(query=args.query, category=args.category, zip_code=args.zip_code, sort=args.sort)
-    return None
+    return rp.resolve_start_url(args)
 
 
 def _dump_path(out_path: str) -> str:
@@ -164,28 +137,11 @@ async def _enable_scraping_browser_auto_solve(context: BrowserContext, page: Pag
 
 
 async def _maybe_solve_captcha(
-    *, html: str, url: str, client: Optional[TwoCaptchaClient], policy: str, min_score: float = 0.3,
+    *, html: str, url: str, client: Optional[TwoCaptchaClient], policy: str, budget: SolveBudget,
+    min_score: float = 0.3,
 ) -> Optional[dict]:
-    if policy == "off" or client is None:
-        return None
-    result = solve_when_blocked(
-        client=client, page_url=url, html=html, count_product_links=lp.count_result_cards,
-        extra_markers=lp.BOT_CHALLENGE_MARKERS, min_score=min_score,
-    )
-    action = result.get("action")
-    if action == "no_captcha_detected":
-        pass
-    elif action == "skipped_products_present":
-        log.info("Captcha widget present but results already rendered — not solving.")
-    elif action == "warning_no_key":
-        log.warning("Captcha solving skipped: %s", result.get("detail"))
-    elif action == "warning_solver_error":
-        log.warning("Captcha solve failed: %s", result.get("detail"))
-    elif action == "solved":
-        log.info("Captcha solved via 2Captcha (%s).", result.get("captcha_type"))
-    elif action == "detected_unidentified_widget":
-        log.warning("A captcha-like marker was detected but no known widget/sitekey could be extracted.")
-    return result
+    return rp.captcha_step(html=html, url=url, client=client, policy=policy, min_score=min_score,
+                           budget=budget, logger=log)
 
 
 async def _connect_over_cdp(pw, cdp_endpoint: str):
@@ -204,16 +160,19 @@ async def scrape_search(
     proxy_pool: Optional[ProxyPool], client: Optional[TwoCaptchaClient],
     autosolve: bool, user_agent: Optional[str],
 ) -> tuple:
-    """Returns (products, blocked, remote_api_error, scroll_rounds_done, scroll_error).
+    """Returns (products, blocked, remote_api_error, scroll_rounds_done,
+    shortfall, stop_reason).
 
-    `scroll_error` is True only when the scroll loop itself broke early on
-    an exception (not on reaching --max-results/--stall-rounds/--max-scrolls
-    normally) — the caller turns that into EXIT_PARTIAL when products were
-    already collected, instead of silently reporting "complete" on a run
-    that actually stopped short because something failed mid-pagination."""
+    `shortfall` is True when the run stopped short — the scroll loop broke
+    on an exception, or Lidl's own counter states more products than were
+    collected — and the caller turns it into EXIT_PARTIAL when products
+    were collected. `stop_reason` says why the run ended; `parser_found_nothing`
+    means the page stated products and the parser recognised none."""
     blocked = False
     remote_api_error = False
     scroll_error = False
+    # One paid-solve allowance for this page, shared by every scroll round.
+    budget = SolveBudget()
 
     proxy = proxy_pool.next() if proxy_pool else None
     log.info("Using proxy %s", proxy.masked() if proxy else "(no local proxy pool — direct connection, or a --cdp-endpoint session providing its own exit)")
@@ -240,7 +199,7 @@ async def scrape_search(
     if last_error is not None:
         await context.close()
         log.error("Search page permanently failed to load: %s", last_error)
-        return [], False, True, 0, False
+        return [], False, True, 0, False, rp.STOP_NAVIGATION_FAILED
 
     if status is not None and status >= 400:
         # A 404 here (unlike this repo's own build-time fetches — see
@@ -262,6 +221,7 @@ async def scrape_search(
     previous_height: Optional[int] = None
     clicked_last_round = False
     rounds = 0
+    loop_reason = rp.STOP_MAX_SCROLLS
 
     for round_num in range(args.max_scrolls + 1):
         rounds = round_num
@@ -270,8 +230,11 @@ async def scrape_search(
         cards_present = lp.count_result_cards(html) > 0
         if captcha_detected and not cards_present:
             blocked = True
-        captcha_result = await _maybe_solve_captcha(html=html, url=start_url, client=client, policy=args.solve_captcha, min_score=args.min_score)
-        if captcha_result and captcha_result.get("action") in ("warning_no_key", "warning_solver_error", "detected_unidentified_widget"):
+        captcha_result = await _maybe_solve_captcha(
+            html=html, url=start_url, client=client, policy=args.solve_captcha,
+            budget=budget, min_score=args.min_score,
+        )
+        if captcha_result and captcha_result.get("action") in rp.UNSOLVED_ACTIONS:
             if lp.count_result_cards(html) == 0:
                 blocked = True
 
@@ -311,8 +274,10 @@ async def scrape_search(
 
         if len(merged) >= args.max_results:
             merged = merged[: args.max_results]
+            loop_reason = rp.STOP_MAX_RESULTS
             break
         if round_num >= args.max_scrolls:
+            loop_reason = rp.STOP_MAX_SCROLLS
             break
 
         try:
@@ -331,6 +296,7 @@ async def scrape_search(
                 stall = 0
             else:
                 if stall >= args.stall_rounds:
+                    loop_reason = rp.STOP_STALLED
                     break
                 await page.evaluate(
                     "() => window.scrollBy(0, Math.max(Math.floor(window.innerHeight * 0.8), 600))"
@@ -343,25 +309,25 @@ async def scrape_search(
         await asyncio.sleep(args.scroll_delay)
 
     final_html = await page.content()
-    total_available = lp.total_result_count(final_html)
-    expected = min(total_available, args.max_results) if total_available is not None else None
-    if expected is not None and len(merged) < expected:
-        log.warning(
-            "Incomplete virtualized grid: Lidl reports %d products, requested %d, collected %d.",
-            total_available, args.max_results, len(merged),
-        )
-        scroll_error = True
+    stop_reason, shortfall, _ = rp.end_of_run(
+        final_html=final_html, collected=len(merged), max_results=args.max_results,
+        blocked=blocked, loop_reason=loop_reason, scroll_failed=scroll_error,
+    )
 
     if args.dump_html:
         Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
 
     await context.close()
-    return merged, blocked, remote_api_error, rounds, scroll_error
+    return merged, blocked, remote_api_error, rounds, shortfall, stop_reason
 
 
 async def run(args: argparse.Namespace) -> int:
     started_at = time.time()
-    start_url = _resolve_start_url(args)
+    try:
+        start_url = _resolve_start_url(args)
+    except rp.UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_BAD_USAGE
     if not start_url:
         print("Error: provide --url, --query, or --category", file=sys.stderr)
         return EXIT_BAD_USAGE
@@ -417,10 +383,11 @@ async def run(args: argparse.Namespace) -> int:
                 browser = await pw.chromium.launch(headless=args.headless)
 
             if cdp_connect_failed:
-                merged, blocked, remote_api_error, rounds, scroll_error = [], False, True, 0, False
+                merged, blocked, remote_api_error, rounds, scroll_error, stop_reason = (
+                    [], False, True, 0, False, rp.STOP_CDP_CONNECT_FAILED)
             else:
                 autosolve = bool(args.cdp_endpoint) and args.solve_captcha != "off"
-                merged, blocked, remote_api_error, rounds, scroll_error = await scrape_search(
+                merged, blocked, remote_api_error, rounds, scroll_error, stop_reason = await scrape_search(
                     args=args, start_url=start_url, browser=browser, proxy_pool=proxy_pool,
                     client=client, autosolve=autosolve, user_agent=user_agent,
                 )
@@ -451,6 +418,8 @@ async def run(args: argparse.Namespace) -> int:
         allow_empty=args.allow_empty,
         started_at=started_at,
         price_confirmed_pct=price_confirmed_pct,
+        parser_failed=stop_reason == rp.STOP_PARSER_FOUND_NOTHING,
+        stop_reason=stop_reason,
     )
 
 

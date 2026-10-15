@@ -1,7 +1,7 @@
 name: Claude Code Review
 
 # Automated first-pass review on every PR. Extra to the family core
-# (CLAUDE.md §11) — same token-guard and stable-channel reasoning as
+# — same token-guard and stable-channel reasoning as
 # claude.yml, see the comments there.
 
 on:
@@ -38,10 +38,10 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_claude_code_executable: ${{ env.CLAUDE_CODE_PATH }}
           prompt: |
-            Review this PR against CLAUDE.md's invariants (the ones in
-            ~/2scraper/CLAUDE.md if this checkout carries a copy, section 8
-            in particular) — do not re-litigate them, explain instead of
-            complying if a change seems to conflict with one. Flag banned
-            wording (section 12), output-contract drift (section 9), and
+            Review this PR against the invariants documented in README.md,
+            CONTRIBUTING.md and the module docstrings — do not re-litigate
+            them, explain instead of complying if a change seems to conflict
+            with one. Flag banned wording (see smoke_test.py), output-contract
+            drift (exit codes, sidecar, Product field order), and
             anything that touches pagination or captcha handling without
             the corresponding smoke_test.py coverage.

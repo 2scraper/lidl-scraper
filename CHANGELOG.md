@@ -9,11 +9,65 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+> **Behaviour changes in this batch.**
+> - A local engine no longer BUYS a captcha solve. None of them injects a
+>   token into the page, so a bought token could never clear a challenge;
+>   the page is now reported blocked (exit 3) without creating a 2Captcha
+>   task. Before, one blocked page bought one solve per scroll round (5 with
+>   default flags, 21 with `--max-scrolls 20 --stall-rounds 20`).
+>   `--cdp-endpoint` is unaffected.
+> - A served page whose own "N Products" counter states products while the
+>   parser recognises none now exits **5** with a sidecar
+>   (`status: failed`, `stop_reason: parser_found_nothing`,
+>   `output_written: false`), instead of exit 4 "no products".
+> - A run that collected rows and was then blocked or hit a remote error
+>   now exits **6** (partial) instead of 3/5; `stop_reason` keeps the cause.
+> - Negative `--retries`, `--retry-delay`, `--scroll-delay` and
+>   `--proxy-block-retries`, and a `--min-score` outside 0..1, are usage
+>   errors (exit 2) in every engine. Selenium and pyppeteer used to accept a
+>   negative `--retries` and never navigate.
+> - `--url` together with `--query`/`--category` is a usage error (exit 2).
+>   A `LIDL_URL` from the environment or `.env` no longer overrides a typed
+>   `--query`/`--category`, and `.env.example` ships it commented out.
+
+### Fixed — 2026-10-14 audit
+
+- Output files and the sidecar are written atomically (temp file in the
+  same directory, fsync, rename), so an interrupted write leaves the
+  previous file intact instead of a truncated one. New files follow the
+  umask; an existing file keeps its mode.
+- CSV output prefixes text cells starting with `=`, `+`, `-`, `@`, a tab or
+  a line break with `'`, so a spreadsheet does not execute them. JSON is
+  unchanged; the sidecar records `csv_cells_escaped`.
+- Paid captcha solves go through one per-page allowance
+  (`captcha_solver.SolveBudget`, `SOLVES_PER_PAGE = 1`) checked before any
+  purchase and shared by every scroll round.
+- The sidecar's `stop_reason` now says why the run ended (`max_results`,
+  `stalled`, `max_scrolls`, `incomplete_grid`, `scroll_failed`,
+  `parser_found_nothing`, `navigation_failed`, `blocked`, …) instead of
+  repeating `status`.
+- `diff_runs.py` refuses runs that started from different URLs or carry
+  different `zip_code`/`store_id` values, and compares prices as numbers,
+  so the same run saved as JSON and as CSV no longer diffs as "changed".
+- `.gitignore` covers every renamed `.env` copy (`.env.bak`, `.env.local`,
+  …) and raw dump directories and files (`live/`, `out/`, `*.pageN`, a
+  root-level `*.html`).
+- The credential scan is one script, `.github/ci_checks.py`, run by CI and
+  by `smoke_test.py`. It now also catches unquoted and JSON-escaped key
+  fields, bare 32-hex keys and URLs with embedded credentials, scans
+  untracked files, and skips virtualenvs by `pyvenv.cfg`.
+- The numeric argparse validators live in one module (`run_policy.py`) and
+  are shared by all three engines.
+- The canary's Scraping Browser job fails, naming the missing
+  `LIDL_CDP_ENDPOINT` secret, instead of skipping green; the local job also
+  checks that core columns are non-null on every row.
+- Comments and docs no longer cite private maintainer notes.
+
 ### Reviewed — 2026-09-20, restored the family's round-level crash safety
 - `lidl_parser.safe_parse_search_results()` had been changed to let a
   parsing exception propagate to the engine's top-level crash handler
   instead of degrading that one round to empty. Restored the family-wide
-  invariant (CLAUDE.md §6/§10, same idiom as skyscanner-scraper's
+  invariant (same idiom as skyscanner-scraper's
   `flight_parser.safe_parse_search_results` and stockx-scraper's per-engine
   `safe_parse` closures): a bad round degrades to "found nothing new,"
   logged at ERROR level with the exception's message, rather than crashing
@@ -115,8 +169,7 @@ rather than being a silent violation of that.
   `puppeteer_scraper.py`), the same family-shared, no-site-knowledge
   modules ported near-verbatim from `skyscanner-scraper` (`output_writer.py`,
   `proxy_pool.py`, `captcha_solver.py`, `fingerprint_client.py`,
-  `scraper_api_client.py`, `diff_runs.py`, `env_config.py` — per CLAUDE.md
-  §7), and `lidl_parser.py` as this repo's own site knowledge.
+  `scraper_api_client.py`, `diff_runs.py`, `env_config.py`), and `lidl_parser.py` as this repo's own site knowledge.
 - `Product` schema extended with grocery-specific fields not present in
   either sibling repo: `unit_price`, `unit_size`, `original_price`,
   `discount_pct`, `is_weekly_deal`, `deal_valid_from`, `deal_valid_until`,
@@ -137,7 +190,7 @@ rather than being a silent violation of that.
 ### Family-shared modules, ported unchanged in substance from skyscanner-scraper
 - `env_config.ENV_KEYS` renamed to this repo's own `LIDL_PROXY` /
   `LIDL_CDP_ENDPOINT` / `LIDL_URL` (kept in sync with `.env.example`,
-  verified by a `smoke_test.py` check per CLAUDE.md §17).
+  verified by a `smoke_test.py` check).
 - `output_writer.py`'s exit codes, `STATUS_BY_EXIT` map, and
   `finish_run()` precedence logic are byte-for-byte identical to both
   prior family members — only `Product`'s site-specific tail differs.
