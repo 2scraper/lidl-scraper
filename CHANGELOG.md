@@ -9,6 +9,8 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-15
+
 > **Behaviour changes in this batch.**
 > - A local engine no longer BUYS a captcha solve. None of them injects a
 >   token into the page, so a bought token could never clear a challenge;
@@ -62,6 +64,8 @@ rather than being a silent violation of that.
   `LIDL_CDP_ENDPOINT` secret, instead of skipping green; the local job also
   checks that core columns are non-null on every row.
 - Comments and docs no longer cite private maintainer notes.
+
+## [0.1.0] — 2026-09-20
 
 ### Reviewed — 2026-09-20, restored the family's round-level crash safety
 - `lidl_parser.safe_parse_search_results()` had been changed to let a
@@ -198,4 +202,6 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/main...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/2scraper/lidl-scraper/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/2scraper/lidl-scraper/releases/tag/v0.1.0
