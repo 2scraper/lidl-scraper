@@ -10,6 +10,12 @@ A price difference that comes with a `price_source` difference is reported
 as `source_changed`, not `changed` — it says something about how much of
 each run's data got DOM-confirmed, not about the site. `--fail-on-change`
 ignores `source_changed` rows for exactly that reason.
+
+It also refuses two runs that did not sample the same thing: a different
+start URL (another query, category or sort) or a different `zip_code` /
+`store_id` on the rows. Grocery prices are regional, so a price difference
+between two regions is not a price change. Prices are compared as numbers,
+so the same run saved as JSON and as CSV diffs as unchanged.
 """
 from __future__ import annotations
 
@@ -47,6 +53,20 @@ def _index_by_sku(rows: List[dict]) -> Dict[str, dict]:
     return out
 
 
+def _price(value):
+    """CSV reads every cell back as a string; JSON keeps numbers."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _region(rows: Dict[str, dict]) -> set:
+    return {((r.get("zip_code") or None), (r.get("store_id") or None)) for r in rows.values()}
+
+
 def diff(old_path: str, new_path: str) -> dict:
     old_meta, new_meta = _load_meta(old_path), _load_meta(new_path)
     for label, meta in (("old", old_meta), ("new", new_meta)):
@@ -57,7 +77,19 @@ def diff(old_path: str, new_path: str) -> dict:
                 f"un-fetched pages would read as delisted products."
             )
 
+    if old_meta.get("url") != new_meta.get("url"):
+        raise SystemExit(
+            f"error: refusing to diff — the runs started from different URLs "
+            f"({old_meta.get('url')!r} vs {new_meta.get('url')!r}), so they sampled "
+            f"different listings."
+        )
+
     old_rows, new_rows = _index_by_sku(_load_rows(old_path)), _index_by_sku(_load_rows(new_path))
+    if old_rows and new_rows and _region(old_rows) != _region(new_rows):
+        raise SystemExit(
+            "error: refusing to diff — the runs carry different zip_code/store_id values, "
+            "and a regional price difference is not a price change."
+        )
     old_skus, new_skus = set(old_rows), set(new_rows)
 
     added = sorted(new_skus - old_skus)
@@ -66,7 +98,7 @@ def diff(old_path: str, new_path: str) -> dict:
 
     for sku in sorted(old_skus & new_skus):
         o, n = old_rows[sku], new_rows[sku]
-        old_price, new_price = o.get("price"), n.get("price")
+        old_price, new_price = _price(o.get("price")), _price(n.get("price"))
         if old_price == new_price:
             continue
         entry = {"sku": sku, "old_price": old_price, "new_price": new_price, "title": n.get("title")}

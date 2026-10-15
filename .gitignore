@@ -7,6 +7,22 @@ lidl_results.*
 *_debug.html
 *_debug.png
 live_results/
+# raw captures and dumps, by KIND of directory rather than one chosen name
+live/
+out/
+output/
+run/
+runs/
+result/
+results/
+tmp/
+scratch/
+dump/
+dumps/
+*.page[0-9]*
+# a bare HTML dump at the repo root (the landing page is the one exception)
+/*.html
+!/landing.html
 
 # python
 __pycache__/
@@ -31,6 +47,8 @@ node_modules/
 
 # secrets
 *.log
-.env
+# every renamed working copy of .env (.env.bak, .env.local, .env.save …)
+.env*
+!.env.example
 *.key
 secrets*

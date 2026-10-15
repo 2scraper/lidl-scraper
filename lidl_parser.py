@@ -3,8 +3,8 @@
 analog of stockx-scraper's product_parser.py and skyscanner-scraper's
 flight_parser.py).
 
-**Honesty note, read before trusting anything below** (CLAUDE.md §15: an
-unverified site gets that stated plainly, not glossed over).
+**Honesty note, read before trusting anything below** (an unverified
+site gets that stated plainly, not glossed over).
 
 Updated 2026-09-20 from a REAL, browser-rendered capture (Roman's own
 machine, via an actual Chromium browser — not this repo's earlier
@@ -854,7 +854,7 @@ def safe_parse_search_results(html: str, **kwargs) -> SearchResult:
     nothing new here" instead of propagating out of an engine's round loop
     and crashing the whole run — which would discard every product already
     collected in earlier rounds. This is the same family-wide invariant
-    (CLAUDE.md §6/§10) as skyscanner-scraper's `flight_parser.
+    as skyscanner-scraper's `flight_parser.
     safe_parse_search_results` and stockx-scraper's per-engine `safe_parse`
     closures: one bad round is a reason to log loudly and move on, not to
     lose everything gathered so far. The exception is logged at ERROR level

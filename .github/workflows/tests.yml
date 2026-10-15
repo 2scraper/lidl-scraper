@@ -40,22 +40,8 @@ jobs:
           print('sample_output OK')
           "
       - name: No committed credentials
-        run: |
-          set +e
-          # smoke_test.py deliberately contains fake-credential-SHAPED
-          # fixtures to test the masking/redaction logic itself — excluded
-          # alongside .env.example, not a loosening of the check against
-          # real leaks (same exclusion the rest of the family applies to
-          # its own smoke_test.py).
-          MATCHES=$(grep -rnE "(api[_-]?key|TWOCAPTCHA_KEY|LIDL_PROXY)\s*=\s*['\"][A-Za-z0-9]{10,}" \
-            --include="*.py" --include="*.md" --include="*.env*" . | grep -vE "\.env\.example|smoke_test\.py")
-          set -e
-          if [ -n "$MATCHES" ]; then
-            echo "$MATCHES"
-            echo "::error::possible committed credential — see matches above"
-            exit 1
-          fi
-          echo "no committed credentials found"
+        # One implementation, shared with smoke_test.py.
+        run: python3 .github/ci_checks.py --secret-check
 
   docker:
     name: docker image builds, runs, and launches Chromium

@@ -2,7 +2,7 @@
 """fingerprint_client.py — 2Captcha Fingerprint API fetch + application.
 No site knowledge.
 
-Two rules, both from the family's invariants (CLAUDE.md §8):
+Two rules, both family invariants:
 
   - Never set a fingerprint over `--cdp-endpoint`. The Scraping Browser API
     brings its own device identity; stacking a second on top creates a
@@ -49,7 +49,7 @@ def user_agent_from(fingerprint: dict) -> Optional[str]:
 # This module deliberately extracts and applies ONLY the user agent from a
 # Fingerprint API profile — never a locale or timezone, even though the
 # real API almost certainly carries signal for both somewhere in the
-# response. CLAUDE.md §16/§17 names the exact failure mode this avoids:
+# response. This avoids a known failure mode:
 # an older sibling repo shipped `f"en-{country}"` as a fabricated locale
 # and never applied the API's own timezone field at all, and both went
 # undetected for months because nothing exercises a credentialed path in
@@ -60,7 +60,7 @@ def user_agent_from(fingerprint: dict) -> Optional[str]:
 # mistake with a different guessed key. Add locale/timezone application
 # here ONLY once a real API response (or 2Captcha support) confirms the
 # field name; until then, omitting it is more honest than guessing it
-# (CLAUDE.md §8: "never present a guess as a fact").
+# (never present a guess as a fact).
 
 
 def refuse_if_cdp(cdp_endpoint: Optional[str]) -> bool:

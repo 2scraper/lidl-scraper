@@ -14,12 +14,17 @@ Policy, matching the family's hard-won rule that "detected != blocking":
     run continues, and only reports EXIT_BLOCKED if the page really was
     gated (see output_writer.EXIT_BLOCKED).
 
+  - A paid solve is only bought when it can be USED and when the page's
+    allowance is not spent. Every call site passes the same `SolveBudget`
+    (one allowance per page, checked BEFORE the purchase, never reset by a
+    retry or a scroll round), and `can_inject=False` — which is what every
+    local engine in this repo passes today, because none of them injects a
+    token into the page — means detection is reported and nothing is
+    bought. A token nobody injects is money spent for nothing.
+
 No JavaScript crosses this module's boundary: it hands back a plain
-(captcha_type, sitekey, token) triple. The engine — which already speaks
-its own driver's dialect (Playwright/Selenium/pyppeteer) — is the one that
-calls page.evaluate / execute_script to inject the token, because that is
-exactly the kind of per-engine primitive `page_flow.py`-style code should
-own instead of a shared module quietly picking one driver's dialect.
+(captcha_type, sitekey, token) triple. An engine that implements injection
+in its own driver's dialect would pass `can_inject=True`.
 """
 from __future__ import annotations
 
@@ -141,9 +146,42 @@ def _task_payload(signal: CaptchaSignal, page_url: str, *, proxyless: bool, min_
         # score` is the CLI knob; omitting it would leave 2Captcha's own
         # server-side default in effect, silently, which is the same
         # "documented flag nobody reads" shape this family has shipped
-        # before (CLAUDE.md §17) — so this module always sends one.
+        # before — so this module always sends one.
         task["minScore"] = min_score
     return task
+
+
+# How many paid solves one page may buy. This repo reads one page per run
+# (a scroll-virtualized grid), so this is also the per-run allowance.
+SOLVES_PER_PAGE = 1
+
+
+class SolveBudget:
+    """One page's allowance of paid solves. Create it ONCE per page, outside
+    every retry and scroll loop, and hand the same object to every call
+    site; `spend()` is checked before each purchase."""
+
+    def __init__(self, limit: int = SOLVES_PER_PAGE):
+        self.limit = limit
+        self.spent = 0
+        self._reported: set = set()
+
+    def available(self) -> bool:
+        return self.spent < self.limit
+
+    def spend(self) -> bool:
+        if not self.available():
+            return False
+        self.spent += 1
+        return True
+
+    def first_time(self, action: str) -> bool:
+        """True the first time an outcome is seen — lets a caller log a
+        repeated outcome once instead of on every scroll round."""
+        if action in self._reported:
+            return False
+        self._reported.add(action)
+        return True
 
 
 def solve_when_blocked(
@@ -152,6 +190,8 @@ def solve_when_blocked(
     page_url: str,
     html: str,
     count_product_links: Callable[[str], int],
+    budget: SolveBudget,
+    can_inject: bool,
     extra_markers: Sequence[str] = (),
     proxyless: bool = True,
     min_score: float = 0.3,
@@ -171,6 +211,14 @@ def solve_when_blocked(
     signal = identify_widget(html)
     if signal is None:
         return {"action": "detected_unidentified_widget"}
+
+    if not can_inject:
+        # Nothing would put the token into the page, so buying one cannot
+        # clear the challenge.
+        return {"action": "detected_not_injectable", "captcha_type": signal.captcha_type.value}
+
+    if not budget.spend():
+        return {"action": "budget_exhausted", "captcha_type": signal.captcha_type.value}
 
     try:
         task = _task_payload(signal, page_url, proxyless=proxyless, min_score=min_score)

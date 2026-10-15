@@ -1,7 +1,7 @@
 name: Claude
 
 # Mention @claude in an issue, PR review, or PR review comment to have
-# Claude Code act on it. Extra to the family core (CLAUDE.md §11) — the
+# Claude Code act on it. Extra to the family core — the
 # offline/canary split in tests.yml/canary.yml is what actually gates
 # merges; this is a convenience on top of it.
 
@@ -37,8 +37,8 @@ jobs:
       # checked here through step `env` instead — a repo copied without
       # CLAUDE_CODE_OAUTH_TOKEN gets a clean skip on the steps below
       # rather than the action's own environment validation FAILING the
-      # job and leaving a permanently red check on every PR (CLAUDE.md
-      # §11 — a check that's always red teaches everyone to ignore checks).
+      # job and leaving a permanently red check on every PR (a
+      # check that's always red teaches everyone to ignore checks).
       - name: Check token is configured
         id: token_check
         env:

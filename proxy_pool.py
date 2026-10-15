@@ -189,8 +189,8 @@ def is_proxy_dead_error(message: str) -> bool:
 
 # --------------------------------------------------------------------------- #
 # Redacting a credential OUT OF an arbitrary string — not the Proxy dataclass
-# above, but a driver/HTTP library's own exception message. CLAUDE.md §8:
-# "an EXCEPTION MESSAGE is a log" — Playwright's connect_over_cdp repeats a
+# above, but a driver/HTTP library's own exception message. An exception
+# message is a log — Playwright's connect_over_cdp repeats a
 # failed ws:// endpoint (login:password embedded) up to five times in one
 # error (message + a four-line call log), and `requests` puts the full URL,
 # query string included, into every HTTPError/connection-error message. Any

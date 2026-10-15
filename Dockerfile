@@ -22,7 +22,7 @@ RUN pip install --no-cache-dir -r requirements-playwright.txt \
 # in CI.
 COPY env_config.py proxy_pool.py output_writer.py captcha_solver.py \
      fingerprint_client.py scraper_api_client.py diff_runs.py \
-     lidl_parser.py playwright_scraper.py puppeteer_scraper.py \
+     lidl_parser.py run_policy.py playwright_scraper.py puppeteer_scraper.py \
      selenium_scraper.py smoke_test.py ./
 # smoke_test.py also reads these straight off disk (the ENV_KEYS<->
 # .env.example sync check and the sample-output-schema check) — missing
