@@ -3,6 +3,9 @@ name: canary
 on:
   schedule:
     - cron: "37 6 * * *"   # once daily; avoid :00 so it doesn't pile up with everyone else's
+    # Mondays only: the paid job (canary-cdp) runs on this
+    # schedule (each run bills); the free jobs keep the daily one above.
+    - cron: "37 6 * * 1"
   workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
 
 jobs:
@@ -66,7 +69,11 @@ jobs:
   # needs the LIDL_CDP_ENDPOINT secret, and without it this job FAILS with
   # an error naming the secret: a skipped job tests nothing and must not
   # read as green. canary-local above tests the no-secret default path.
+  # This job bills a Scraping Browser session, so it runs on the weekly
+  # (Monday) schedule and on a manual dispatch only.
   canary-cdp:
+    # Paid path: weekly schedule or a manual dispatch only.
+    if: github.event_name != 'schedule' || github.event.schedule == '37 6 * * 1'
     runs-on: ubuntu-latest
     env:
       HAS_CDP: ${{ secrets.LIDL_CDP_ENDPOINT != '' }}

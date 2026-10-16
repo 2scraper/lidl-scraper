@@ -9,6 +9,11 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary's paid `canary-cdp` job now runs weekly (Mondays 06:37
+  UTC) and on a manual dispatch; the free `canary-local` job still runs daily.
+
 ## [0.2.0] — 2026-10-15
 
 > **Behaviour changes in this batch.**
