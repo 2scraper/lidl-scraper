@@ -11,8 +11,7 @@ rather than being a silent violation of that.
 
 ### Changed
 
-- CI only: the canary's paid `canary-cdp` job now runs weekly (Mondays 06:37
-  UTC) and on a manual dispatch; the free `canary-local` job still runs daily.
+- CI only: the whole canary, free and paid jobs alike, now runs weekly (Mondays 06:37 UTC) and on a manual dispatch; the daily schedule is removed.
 
 ## [0.2.0] — 2026-10-15
 
