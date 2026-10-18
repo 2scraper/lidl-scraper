@@ -390,7 +390,7 @@ def run(args: argparse.Namespace) -> int:
         client = TwoCaptchaClient(args.twocaptcha_key, api_base=args.captcha_api)
 
     user_agent = None
-    cdp_refused_fingerprint = refuse_if_cdp(args.cdp_endpoint)
+    cdp_refused_fingerprint = args.fingerprint and refuse_if_cdp(args.cdp_endpoint)
     if args.fingerprint and not cdp_refused_fingerprint:
         if client is None:
             log.warning("--fingerprint requested but no --twocaptcha-key/TWOCAPTCHA_KEY set — continuing without one.")

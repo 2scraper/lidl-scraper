@@ -62,9 +62,12 @@ Most of what used to be a guess here is now a confirmed fact:
   has been exercised by the actual scraper, not a hand-driven browser
   session — the single biggest remaining gap this repo had (see
   `TESTING.md` step 2) is now closed.
-- **Still unconfirmed**: the Scraping Browser path (`--cdp-endpoint`) has
-  not been run live. Store selection, sorting, aisle listings, product
-  pages, discounted tiles and images were all confirmed on 2026-10-18. Batched virtual-grid pagination and
+- **Everything the scraper does has run live** as of 2026-10-18: store
+  selection, sorting, aisle listings, product pages, discounted tiles,
+  images, and the Scraping Browser path (`--cdp-endpoint`, Playwright and
+  pyppeteer). A Scraping Browser profile serves one session at a time and
+  answers `profile_locked` for a few seconds after the previous one, which
+  the engines report as exit 5. Batched virtual-grid pagination and
   the real `View More Products` control are now live-verified.
 - **The architecture — exit codes, the output contract, dedupe,
   credential redaction, CLI validation, all three engines importing
