@@ -1,3 +1,3 @@
-sku,source,category,title,brand,price,currency,price_source,product_url,image_url,scraped_at,unit_price,unit_size,original_price,discount_pct,is_weekly_deal,deal_valid_from,deal_valid_until,store_id,zip_code
-lidl-11675058,lidl.com,Food,whole milk,,3.3,USD,dom,https://www.lidl.com/p/whole-milk/p11675058,,2026-09-20T13:13:11Z,0.03,128 fl.oz.,,,,,,,
-lidl-11242918,lidl.com,Food,Lactaid® whole milk,LACTAID®,6.38,USD,dom,https://www.lidl.com/p/lactaid-whole-milk/p11242918,,2026-09-20T13:13:11Z,0.07,96 fl.oz.,,,,,,,
+sku,source,category,title,brand,price,currency,price_source,product_url,image_url,scraped_at,unit_price,unit_size,original_price,discount_pct,is_weekly_deal,lidl_plus_price,deal_valid_from,deal_valid_until,store_id,zip_code
+lidl-11675058,lidl.com,Food,whole milk,,3.3,USD,dom,https://www.lidl.com/p/whole-milk/p11675058,,2026-09-20T13:13:11Z,0.03,128 fl.oz.,,,,,,,,
+lidl-11242918,lidl.com,Food,Lactaid® whole milk,LACTAID®,6.38,USD,dom,https://www.lidl.com/p/lactaid-whole-milk/p11242918,,2026-09-20T13:13:11Z,0.07,96 fl.oz.,,,,,,,,

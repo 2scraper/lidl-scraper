@@ -11,9 +11,16 @@ run to report success. The engines now walk viewport-sized steps, click the
 control after a batch stabilizes, and compare collected rows with Lidl's own
 product counter.
 
-Still requiring live verification: Selenium and pyppeteer end-to-end,
-store/zip binding, image extraction, and an actual discounted/weekly-deal
-tile. Offline checks remain useful, but do not substitute for these runs.
+**Update, 2026-10-18**: Selenium and pyppeteer passed the same live runs
+(`whole milk` ×10 and `milk` ×60, identical 60-row results), and a real
+weekly-deals listing confirmed discounted tiles and images — see
+CHANGELOG. On Apple Silicon, pyppeteer needs `PYPPETEER_EXECUTABLE_PATH`
+pointing at an installed Chrome; its own downloaded Chromium is x86_64.
+
+Still requiring live verification: store/zip binding, and the
+`deal_valid_from`/`deal_valid_until` fields (no tile states a deal's dates;
+the "In stores starting 10/28" badge is an availability date). Offline
+checks remain useful, but do not substitute for these runs.
 
 Run everything below from a normal terminal on your own machine — wherever
 this repo lives for you.

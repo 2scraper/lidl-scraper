@@ -9,6 +9,32 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-18
+
+> **Behaviour changes in this batch.**
+> - New output column `lidl_plus_price`, between `is_weekly_deal` and
+>   `deal_valid_from`. CSV consumers that read columns by position need
+>   updating.
+> - `price` is what a shopper without the Lidl Plus app pays. On a tile
+>   discounted only for Lidl Plus members, `price` is the struck-through
+>   price and the member price is in `lidl_plus_price`.
+> - On a Lidl Plus tile `unit_price` is null: Lidl prints only the member
+>   per-unit price there (the avocados' "$ 0.33 each" is 1.99 / 6).
+
+### Fixed
+
+- A discounted tile reported its discount badge as the price: `"-20%$1.59*"` became `price: 20.0`. The price now comes from `.ods-price__value`, so the red onions on `/c/aw42-fresh-deals/a10104750` read 1.59. Any search whose results included a deal was affected; the 2026-09-20 milk captures had none.
+- `unit_size`/`unit_price` are filled for per-piece footers (`"6 Piece$ 0.33 each"`), and `unit_size` for tiles with a Lidl Plus comparison, whose first `.ods-price__footer` is an empty nested one.
+
+### Added
+
+- Listing rows now carry `image_url`, `original_price` (the struck-through price), `discount_pct` (Lidl's own badge), `is_weekly_deal` and `lidl_plus_price`, confirmed against a real weekly-deals capture (`tests/fixtures/lidl_deals_real.html`). On both captured deals pages (74 tiles, 16 with a Lidl Plus price) `price` — or `lidl_plus_price`, where present — matches the tile's own `data-gridbox-impression` price.
+
+### Verified live, 2026-10-18
+
+- Selenium and pyppeteer end to end: `--query "whole milk" --max-results 10` and `--query milk --max-results 60` each exit 0 with `status=complete` and price coverage 1.0; both 60-row runs return the same 60 product URLs at the same prices. pyppeteer 2.0 downloads an x86_64 Chromium that will not start on Apple Silicon, so these runs set `PYPPETEER_EXECUTABLE_PATH` to the installed Google Chrome.
+- Playwright on a weekly-deals listing (`--url https://www.lidl.com/c/aw42-weekly-favorites/a10104751`): 53 products, 18 with a public discount, 10 with a Lidl Plus price, every row with an image.
+
 ### Changed
 
 - CI only: the whole canary, free and paid jobs alike, now runs weekly (Mondays 06:37 UTC) and on a manual dispatch; the daily schedule is removed.
@@ -206,6 +232,7 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/2scraper/lidl-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/lidl-scraper/releases/tag/v0.1.0

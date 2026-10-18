@@ -62,9 +62,9 @@ Most of what used to be a guess here is now a confirmed fact:
   has been exercised by the actual scraper, not a hand-driven browser
   session — the single biggest remaining gap this repo had (see
   `TESTING.md` step 2) is now closed.
-- **Still unconfirmed**: the exact markup of an actual discounted/
-  "weekly deal" tile (none was captured), image extraction, and the
-  store/zip session-binding mechanism. Batched virtual-grid pagination and
+- **Still unconfirmed**: the store/zip session-binding mechanism.
+  Discounted tiles and images were confirmed on 2026-10-18 against a real
+  weekly-deals listing. Batched virtual-grid pagination and
   the real `View More Products` control are now live-verified.
 - **The architecture — exit codes, the output contract, dedupe,
   credential redaction, CLI validation, all three engines importing
@@ -77,8 +77,9 @@ Most of what used to be a guess here is now a confirmed fact:
   (`tests/fixtures/lidl_search_real.html`), not just synthetic ones — see
   `smoke_test.py`'s own module docstring for which is which.
 - Manual captures were followed by full Playwright engine runs, including a
-  60-item query that crossed the first lazy batch. `TESTING.md` records the
-  remaining Selenium/pyppeteer and field-level live checks.
+  60-item query that crossed the first lazy batch. Selenium and pyppeteer
+  passed the same live runs on 2026-10-18; `TESTING.md` records what is
+  still unverified.
 
 ## Local-first
 
@@ -195,7 +196,7 @@ columns after:
 sku, source, category, title, brand, price, currency, price_source, product_url,
 image_url, scraped_at,
 unit_price, unit_size, original_price, discount_pct, is_weekly_deal,
-deal_valid_from, deal_valid_until, store_id, zip_code
+lidl_plus_price, deal_valid_from, deal_valid_until, store_id, zip_code
 ```
 
 Unlike skyscanner-scraper's flight itineraries, a Lidl catalog item
@@ -288,10 +289,12 @@ site):
   "Read this before trusting a run" above. `--zip`/`--store-id` record
   intent and annotate output rows; they are not confirmed to change what
   a search actually returns yet.
-- **Images and weekly-deal fields are not yet live-verified.** The current
-  listing path deliberately leaves them null rather than guessing. A future
-  capture should add them from Lidl's own product payload or confirmed tile
-  markup.
+- **Deal dates are not filled.** Images, `original_price`, `discount_pct`
+  and `is_weekly_deal` come from confirmed tile markup, but no tile states
+  a deal's validity dates, so `deal_valid_from`/`deal_valid_until` stay
+  null on listings. `price` is what a shopper without the Lidl Plus app
+  pays; a member price goes to `lidl_plus_price`, and on those tiles
+  `unit_price` is null because Lidl prints only the member per-unit price.
 
 ## Development
 
