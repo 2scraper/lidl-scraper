@@ -35,10 +35,12 @@ import captcha_solver
 import diff_runs
 import env_config
 import lidl_parser as lp
+import lidl_stores
 import output_writer
 import proxy_pool
 import puppeteer_scraper
 import scraper_api_client
+import run_policy
 import selenium_scraper
 
 try:
@@ -266,7 +268,7 @@ def _():
     assert output_writer.PRODUCT_FIELD_NAMES[: len(expected_head)] == expected_head
     tail = output_writer.PRODUCT_FIELD_NAMES[len(expected_head):]
     assert "unit_price" in tail and "zip_code" in tail and "is_weekly_deal" in tail
-    assert "lidl_plus_price" in tail
+    assert "lidl_plus_price" in tail and "unit_price_per" in tail
 
 
 @check("merge_pages dedupes by sku, last-write-wins, in PAGE order not arrival order")
@@ -394,12 +396,28 @@ def _():
     assert lp.is_search_url(url)
 
 
-@check("search_url builds a confirmed-real /c/<slug>/s<id> category URL when no query is given")
+@check("search_url builds /c/ and /h/ listing URLs from a navigation path")
 def _():
-    url = lp.search_url(category="food-wine/s10068374", zip_code="11803")
-    assert url.startswith("https://www.lidl.com/c/food-wine/s10068374")
-    assert "zip=11803" in url
-    assert lp.is_search_url(url)
+    url = lp.search_url(category="food-wine/s10068374")
+    assert url == "https://www.lidl.com/c/food-wine/s10068374", url
+    assert lp.search_url(category="/aw42-fresh-deals/a10104750") == "https://www.lidl.com/c/aw42-fresh-deals/a10104750"
+    aisle = lp.search_url(category="h/cheese-dairy-eggs/h10095761")
+    assert aisle == "https://www.lidl.com/h/cheese-dairy-eggs/h10095761", aisle
+    assert lp.is_search_url(url) and lp.is_search_url(aisle)
+
+
+@check("search_url sends the sort values the real Sort By control links to")
+def _():
+    # Confirmed 2026-10-18: sort=price_asc made the site serve no grid at all.
+    assert "sort" not in lp.search_url(query="milk")
+    assert lp.search_url(query="milk", sort="price_asc").endswith("q=milk&sort=price")
+    assert lp.search_url(query="milk", sort="price_desc").endswith("sort=price-desc")
+    assert lp.search_url(query="milk", sort="newest").endswith("sort=firstOnlineDate-desc")
+    try:
+        lp.search_url(query="milk", sort="cheapest")
+        raise AssertionError("expected ValueError")
+    except ValueError:
+        pass
 
 
 @check("search_url raises without a query or category")
@@ -581,6 +599,7 @@ def _():
     assert generic_milk.price == 3.30
     assert generic_milk.unit_size == "128 fl.oz."
     assert generic_milk.unit_price == 0.03
+    assert generic_milk.unit_price_per == "fl.oz."
 
     for p in res.products:
         assert p.price_source == "dom"
@@ -606,7 +625,7 @@ def _():
     assert onions.original_price == 1.99
     assert onions.discount_pct == 20.0
     assert onions.is_weekly_deal is True
-    assert onions.unit_size == "2 lb." and onions.unit_price == 0.80
+    assert onions.unit_size == "2 lb." and onions.unit_price == 0.80 and onions.unit_price_per == "lb."
     assert onions.image_url == "https://www.lidl.com/assets/gcp56066dae.png"
 
     assert onions.lidl_plus_price is None
@@ -618,7 +637,7 @@ def _():
     assert avocados.original_price == 3.19, "the stroke price renders as '3.19 $' on this tile"
     assert avocados.discount_pct == 31.0 and avocados.is_weekly_deal is True
     # The footer's "$ 0.33 each" is 1.99 / 6, the member price per piece.
-    assert avocados.unit_size == "6 Piece" and avocados.unit_price is None
+    assert avocados.unit_size == "6 Piece" and avocados.unit_price is None and avocados.unit_price_per is None
 
     steak = by_sku["lidl-11320818"]
     # Member-only discount: a shopper without the app pays the struck-through price.
@@ -633,10 +652,170 @@ def _():
     assert field_picks.original_price is None and field_picks.discount_pct is None
     assert field_picks.is_weekly_deal is False
     assert field_picks.unit_size == "1 Piece" and field_picks.unit_price == 5.99
+    assert field_picks.unit_price_per == "each"
     assert field_picks.lidl_plus_price is None
 
     for p in res.products:
         assert p.image_url and p.image_url.startswith("https://www.lidl.com/assets/"), p.image_url
+
+
+_REAL_PRODUCT_FIXTURE = Path(__file__).resolve().parent / "tests" / "fixtures" / "lidl_product_real.html"
+_REAL_NO_MATCH_FIXTURE = Path(__file__).resolve().parent / "tests" / "fixtures" / "lidl_no_match_real.html"
+
+
+@check("a real product page: listing sku and www URL, deal and Lidl Plus fields from its buybox")
+def _():
+    res = lp.parse_search_results(_REAL_PRODUCT_FIXTURE.read_text(encoding="utf-8"))
+    assert res.source_used == "embedded_json", res.source_used
+    (p,) = res.products
+    assert p.sku == "lidl-11241859", "same sku as the listing tile, not JSON-LD's own sku"
+    assert p.product_url == "https://www.lidl.com/p/mini-avocados/p11241859", p.product_url
+    assert p.price == 2.19 and p.price_source == "dom"
+    assert p.original_price == 3.19 and p.discount_pct == 31.0 and p.is_weekly_deal is True
+    assert p.lidl_plus_price == 1.99
+    assert p.unit_size == "6 Piece" and p.unit_price is None
+
+
+@check("a product page's JSON-LD sku variant suffix does not leak into sku, and only a size bullet becomes unit_size")
+def _():
+    node = {
+        "@type": "Product", "sku": "11675058001", "name": "whole milk",
+        "url": "https://lidl.com/p/whole-milk/p11675058",
+        "description": "<ul><li>pasteurized</li><li>excellent source of calcium</li><li>refrigerated</li><li>128 fl.oz.</li></ul>",
+        "offers": [{"@type": "Offer", "price": 3.48, "priceCurrency": "USD"}],
+    }
+    p = lp._json_ld_node_to_product(node, zip_code=None, store_id=None)
+    assert p.sku == "lidl-11675058", p.sku
+    assert p.product_url == "https://www.lidl.com/p/whole-milk/p11675058"
+    assert p.unit_size == "128 fl.oz.", p.unit_size
+    node["description"] = "<ul><li>pasteurized</li><li>refrigerated</li><li>gallon</li></ul>"
+    assert lp._json_ld_node_to_product(node, zip_code=None, store_id=None).unit_size is None
+
+
+@check("Lidl's no-match page yields no rows, and its own counter does not turn that into a parser failure")
+def _():
+    html = _REAL_NO_MATCH_FIXTURE.read_text(encoding="utf-8")
+    assert lp.total_result_count(html) == 5 and len(lp.extract_gridbox_products(html)) == 2
+    res = lp.parse_search_results(html)
+    assert res.products == [] and res.source_used == "no_match"
+    stop, shortfall, parser_failed = run_policy.end_of_run(
+        final_html=html, collected=0, max_results=30, blocked=False,
+        loop_reason=run_policy.STOP_STALLED, scroll_failed=False,
+    )
+    assert (stop, shortfall, parser_failed) == (run_policy.STOP_NO_MATCH, False, False)
+    # Some stores get it as a 404; that is not a block.
+    assert not run_policy.status_means_blocked(404, html)
+    assert run_policy.status_means_blocked(403, "<html>Access denied</html>")
+    assert not run_policy.status_means_blocked(200, "")
+
+
+@check("default --max-scrolls grows with --max-results and never drops below 20")
+def _():
+    assert run_policy.default_max_scrolls(30) == 20
+    assert run_policy.default_max_scrolls(200) == 60
+    for mod in (playwright_scraper, selenium_scraper, puppeteer_scraper):
+        args = mod.build_arg_parser().parse_args(["--query", "milk", "--max-results", "200"])
+        assert args.max_scrolls is None
+        run_policy.apply_scroll_default(args)
+        assert args.max_scrolls == 60, (mod.__name__, args.max_scrolls)
+        args = mod.build_arg_parser().parse_args(["--query", "milk", "--max-scrolls", "7"])
+        run_policy.apply_scroll_default(args)
+        assert args.max_scrolls == 7
+
+
+_STORE = lidl_stores.Store(
+    object_number="US01449", offer_region="1449", zone="P0P",
+    zip="07086-6400", city="Weehawken", street="Park Ave",
+)
+
+
+@check("Store.cookies() writes st/wh/zn/ar exactly as lidl.com's own store picker does")
+def _():
+    assert dict(_STORE.cookies()) == {
+        "ar": "ar%3D1449%3BEntityID%3D1449%3Bzip%3D07086-6400%3Bcity%3DWeehawken%3Bstreet%3DPark%20Ave",
+        "wh": "1449", "st": "1449", "zn": "P0P",
+    }
+    assert lidl_stores.normalise_store_id("1449") == "US01449"
+    assert lidl_stores.normalise_store_id(" us01449 ") == "US01449"
+    for bad in ("abc", "US1234567", ""):
+        try:
+            lidl_stores.normalise_store_id(bad)
+            raise AssertionError(f"expected StoreLookupError for {bad!r}")
+        except lidl_stores.StoreLookupError:
+            pass
+
+
+@check("pick_store_for_zip: exact zip, then the closest in the same 3-digit area, else none")
+def _():
+    other = lidl_stores.Store("US01103", "1103", "P0F", "23518-5249", "Norfolk", "N Military Hwy")
+    stores = [_STORE, other]
+    assert lidl_stores.pick_store_for_zip("07086", stores)[0] is _STORE
+    assert lidl_stores.pick_store_for_zip("23519", stores)[0] is other
+    store, candidates = lidl_stores.pick_store_for_zip("99501", stores)
+    assert store is None and len(candidates) == 2
+
+
+class _FakeResponse:
+    def __init__(self, text="", payload=None):
+        self.text, self._payload = text, payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _FakeSession:
+    """Serves the homepage, the store-search bundle and the store API."""
+    def __init__(self, items):
+        self.items, self.calls = items, []
+
+    def get(self, url, timeout=None, params=None, headers=None):
+        self.calls.append((url, params, headers))
+        if url == "https://www.lidl.com/":
+            return _FakeResponse('<script src="/s/storesearch-frontend/26_21_2/base.js"></script>')
+        if url.endswith("/s/storesearch-frontend/26_21_2/entry/index.js"):
+            return _FakeResponse("e.set(`x-apikey`,`TestKey123`)")
+        return _FakeResponse(payload={"items": self.items})
+
+
+@check("resolve_store reads the API key from the site's bundle and looks a store up by number or zip")
+def _():
+    item = {"objectNumber": "US01449", "marketingData": {"offerRegion": 1449, "zone": "P0P"},
+            "address": {"zip": "07086-6400", "city": "Weehawken", "streetName": "Park Ave"}}
+    session = _FakeSession([item])
+    store = lidl_stores.resolve_store(store_id="1449", session=session)
+    assert store == _STORE, store
+    api_call = session.calls[-1]
+    assert api_call[1] == {"object_number": "US01449"} and api_call[2] == {"x-apikey": "TestKey123"}
+    assert lidl_stores.resolve_store(zip_code="07086", session=_FakeSession([item])) == _STORE
+    assert lidl_stores.resolve_store(session=_FakeSession([])) is None
+    for kwargs in ({"store_id": "US09999"}, {"zip_code": "99501"}):
+        try:
+            lidl_stores.resolve_store(session=_FakeSession([] if "store_id" in kwargs else [item]), **kwargs)
+            raise AssertionError(f"expected StoreLookupError for {kwargs}")
+        except lidl_stores.StoreLookupError:
+            pass
+
+
+@check("each engine: a malformed --store-id or --zip is EXIT_BAD_USAGE before any network call")
+def _():
+    _IMPORT_ERROR_ATTR = {
+        "playwright_scraper": "_PLAYWRIGHT_IMPORT_ERROR",
+        "selenium_scraper": "_SELENIUM_IMPORT_ERROR",
+        "puppeteer_scraper": "_PYPPETEER_IMPORT_ERROR",
+    }
+    for mod in (playwright_scraper, selenium_scraper, puppeteer_scraper):
+        if getattr(mod, _IMPORT_ERROR_ATTR[mod.__name__], None) is not None:
+            continue
+        for flags in (["--store-id", "abc"], ["--zip", "NY"]):
+            with tempfile.TemporaryDirectory() as td:
+                out = str(Path(td) / "out.json")
+                args = mod.build_arg_parser().parse_args(["--query", "milk", "--out", out, *flags])
+                code = asyncio_run_maybe(mod, args)
+                assert code == output_writer.EXIT_BAD_USAGE, (mod.__name__, flags, code)
+                assert not Path(out).exists()
 
 
 @check("extract_gridbox_products is what parse_search_results tries first (before JSON-LD)")

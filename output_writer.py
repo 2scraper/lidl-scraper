@@ -95,6 +95,10 @@ class Product:
     price shown on the same tile goes to `lidl_plus_price` instead, and
     `original_price`/`discount_pct`/`is_weekly_deal` describe the public
     discount only.
+
+    `unit_price_per` is the unit `unit_price` is quoted in ("fl.oz.",
+    "qt.", "lb.", "each") — the store picks it, so two stores can quote
+    the same item per different units.
     """
 
     # --- family-common ---
@@ -112,6 +116,7 @@ class Product:
 
     # --- lidl.com-specific (grocery item) ---
     unit_price: Optional[float] = None
+    unit_price_per: Optional[str] = None
     unit_size: Optional[str] = None
     original_price: Optional[float] = None
     discount_pct: Optional[float] = None

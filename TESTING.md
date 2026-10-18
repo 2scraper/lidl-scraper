@@ -17,7 +17,14 @@ weekly-deals listing confirmed discounted tiles and images — see
 CHANGELOG. On Apple Silicon, pyppeteer needs `PYPPETEER_EXECUTABLE_PATH`
 pointing at an installed Chrome; its own downloaded Chromium is x86_64.
 
-Still requiring live verification: store/zip binding, and the
+Later the same day, `--store-id`/`--zip` were confirmed to change prices
+in all three engines (the store is a cookie set by the site's own
+picker — see `lidl_stores.py`), and `--sort`, `h/…` aisle categories,
+product pages and the no-match page were run live. pyppeteer now picks
+up an installed Google Chrome on Apple Silicon by itself.
+
+Still requiring live verification: the Scraping Browser path
+(`--cdp-endpoint`, which needs a 2Captcha key), and the
 `deal_valid_from`/`deal_valid_until` fields (no tile states a deal's dates;
 the "In stores starting 10/28" badge is an availability date). Offline
 checks remain useful, but do not substitute for these runs.
@@ -89,12 +96,10 @@ Four outcomes, and what each one means:
   `lidl_parser.BOT_CHALLENGE_MARKERS` the same way skyscanner-scraper's
   PerimeterX incident did for that repo (see its CHANGELOG entry for the
   shape of that kind of entry).
-- **A real page renders but with a "select your store" / zip-code modal
-  blocking the product grid**: this is the other likely first-run outcome
-  given "Read this before trusting a run" in the README — if so, that
-  modal's DOM (what it asks for, what closing it looks like) is exactly
-  what `search_url()`'s `zip` param and a real region-selection step in
-  the engines need to be built against. Capture it.
+- **Prices that do not match a store you picked in a browser**: the
+  store is the `st`/`wh`/`zn`/`ar` cookie set (`lidl_stores.py`). Compare
+  the cookies your browser holds on www.lidl.com with
+  `lidl_stores.resolve_store(store_id=...).cookies()`.
 
 Whatever you find, **updating `lidl_parser.py`'s selectors/heuristics to
 match what you actually saw — with a saved, scrubbed fixture under
@@ -188,6 +193,5 @@ Then, in the GitHub repo's Settings:
   plausible-looking rows: `lidl_parser.py` updated to match what you
   actually saw, with a fixture under `tests/fixtures/` and a new
   `smoke_test.py` check, per `CONTRIBUTING.md`.
-- The store/zip-selection question (see "Read this before trusting a run"
-  in the README) answered one way or the other, with the mechanism
-  documented here and in `lidl_parser.py`'s module docstring.
+- A `--store-id` run whose prices differ from a run with no store, which
+  is how you know the store cookies still take effect.

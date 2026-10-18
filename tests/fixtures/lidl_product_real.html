@@ -1,0 +1,23 @@
+<!--
+  Trimmed fixture from a REAL rendered capture of
+  https://www.lidl.com/p/mini-avocados/p11241859 on 2026-10-18: the page's own
+  schema.org Product JSON-LD, verbatim, and its `.buybox-one__price` block
+  with comments, inline SVGs and Vue `data-v-*` attributes removed. Image
+  asset names are cut to 8 hex digits (see lidl_deals_real.html).
+
+    - JSON-LD `url` is the bare host (https://lidl.com/...) and its offer
+      price is the PUBLIC price, 2.19, with no old price or member price
+    - the buybox renders the same `.ods-price` component as a listing tile:
+      "3.19 $" struck through, a nested public "-31%" / "$2.19*", and the
+      Lidl Plus member price "-9%" / "$1.99*"
+-->
+<html>
+<head>
+<script type="application/ld+json">{"@context":"http://schema.org","@type":"Product","sku":"11241859","description":"\u003Cul>\u003Cli>great spread for toast\u003C/li>\u003Cli>smaller size for an individual serving\u003C/li>\u003Cli>six count\u003C/li>\u003C/ul>","name":"mini avocados","image":["https://www.lidl.com/assets/gcp1fbdd70b.png"],"url":"https://lidl.com/p/mini-avocados/p11241859","brand":{"@type":"Brand"},"offers":[{"@type":"Offer","price":2.19,"priceCurrency":"USD","itemCondition":"NewCondition","availability":"InStoreOnly","url":"https://lidl.com/p/mini-avocados/p11241859"}]}</script>
+</head>
+<body>
+<div class="buybox-one">
+<div class="buybox-one__price" data-v-5c2c0a2e="" data-v-f5be5712=""><div class="ods-price ods-price--variant-large ods-price--pointer-box ods-price--lidl-plus ods-price--value-font-family-global" darktheme="false" hassmallprint="false" isdoublepv="false" isfuturecontext="false" ismultipack="false" isnewprice="true" pricetheme="white_red" uxalign="right"><div aria-hidden="false" class="ods-price__stroke-price"><s>3.19 $</s></div><div class="ods-price__main-wrapper"><div class="ods-price__box-wrapper"><div class="ods-price__comparison"><div><div class="ods-price ods-price--variant-large ods-price--pointer-box ods-price--promotional ods-price--value-font-family-global" darktheme="false" hassmallprint="false" isdoublepv="false" isfuturecontext="false" ismultipack="false" isnewprice="true" uxalign="right"><div class="ods-price__main-wrapper"><div class="ods-price__box-wrapper"><div class="ods-price__box"><div class="ods-price__box-content-wrapper"><div class="ods-price__box-content"><span class="ods-price__box-content-text-el">-31%</span></div></div></div></div><div class="ods-price__value">$2.19*</div></div><div class="ods-price__footer"><span class="ods-footer-item"></span><span class="ods-footer-item"></span></div></div></div></div><div class="ods-price__box"><div class="ods-price__box-content-wrapper"><div class="ods-price__lidl-plus-hint">Lidl Plus Price</div><div class="ods-price__box-content"><span class="ods-price__box-content-text-el">-9%</span></div></div><div aria-hidden="true" class="ods-price__lidl-plus-icon"></div></div></div><div class="ods-price__value">$1.99*</div></div><div class="ods-price__footer"><span class="block-text">6 Piece</span><div>$ 0.33 each</div><span class="ods-footer-item"></span><span class="ods-footer-item"></span></div></div></div>
+</div>
+</body>
+</html>

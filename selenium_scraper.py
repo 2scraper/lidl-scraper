@@ -54,7 +54,8 @@ import env_config
 import lidl_parser as lp
 import run_policy as rp
 from captcha_solver import SolveBudget, detect_from_html
-from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, Product, finish_run, sku_key as _sku_key
+from lidl_stores import Store, StoreApiError
+from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, EXIT_REMOTE_API_ERROR, Product, finish_run, sku_key as _sku_key
 from proxy_pool import Proxy, ProxyPool, ProxyParseError, is_proxy_dead_error, load_proxies
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from scraper_api_client import TwoCaptchaClient
@@ -93,7 +94,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--store-id", default=None)
     p.add_argument("--sort", choices=lp.SORT_VALUES, default="relevance")
     p.add_argument("--max-results", type=rp.positive_int, default=30)
-    p.add_argument("--max-scrolls", type=rp.positive_int, default=20)
+    p.add_argument("--max-scrolls", type=rp.positive_int, default=None)
     p.add_argument("--stall-rounds", type=rp.positive_int, default=4)
     p.add_argument("--scroll-delay", type=rp.nonnegative_float, default=1.5)
     p.add_argument("--format", choices=["json", "csv"], default="json")
@@ -191,7 +192,7 @@ def _maybe_solve_captcha(
 def scrape_search(
     *, args: argparse.Namespace, start_url: str,
     proxy_pool: Optional[ProxyPool], client: Optional[TwoCaptchaClient],
-    user_agent: Optional[str] = None,
+    user_agent: Optional[str] = None, store: Optional[Store] = None,
 ) -> Tuple[List[Product], bool, bool, int, bool]:
     """Returns (products, blocked, remote_api_error, scroll_rounds_done,
     shortfall, stop_reason) — see playwright_scraper.scrape_search."""
@@ -204,6 +205,13 @@ def scrape_search(
     proxy = proxy_pool.next() if proxy_pool else None
     log.info("Using proxy %s", proxy.masked() if proxy else "(no local proxy pool — direct connection, or a --cdp-endpoint session providing its own exit)")
     driver = _build_driver(headless=args.headless, proxy=proxy, cdp_endpoint=args.cdp_endpoint, user_agent=user_agent)
+    if store is not None:
+        # CDP sets a cookie for a domain the browser has not visited yet;
+        # driver.add_cookie() would need a throwaway lidl.com page first.
+        for name, value in store.cookies():
+            driver.execute_cdp_cmd("Network.setCookie", {
+                "name": name, "value": value, "domain": "www.lidl.com", "path": "/", "secure": True,
+            })
 
     last_error = None
     status = None
@@ -238,7 +246,8 @@ def scrape_search(
         log.error("Search page permanently failed to load: %s", last_error)
         return [], False, True, 0, False, rp.STOP_NAVIGATION_FAILED
 
-    if status is not None and status >= 400:
+    first_html = driver.page_source if status is not None and status >= 400 else ""
+    if rp.status_means_blocked(status, first_html):
         log.warning("Search page returned HTTP %d — treating as blocked, not empty.", status)
         blocked = True
 
@@ -321,6 +330,7 @@ def scrape_search(
         final_html=final_html, collected=len(merged), max_results=args.max_results,
         blocked=blocked, loop_reason=loop_reason, scroll_failed=scroll_error,
     )
+    rp.warn_if_nothing_found(collected=len(merged), blocked=blocked, stop_reason=stop_reason, logger=log)
 
     if args.dump_html:
         Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
@@ -355,6 +365,15 @@ def run(args: argparse.Namespace) -> int:
               f"pip install -r requirements-selenium.txt", file=sys.stderr)
         return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
+    rp.apply_scroll_default(args)
+    try:
+        store = rp.resolve_store(args)
+    except rp.UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_BAD_USAGE
+    except StoreApiError as exc:
+        log.error("Could not look up the Lidl store to price against: %s", exc)
+        return EXIT_REMOTE_API_ERROR
 
     try:
         proxies = load_proxies(args.proxy, args.proxy_file)
@@ -383,6 +402,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         merged, blocked, remote_api_error, rounds, scroll_error, stop_reason = scrape_search(
             args=args, start_url=start_url, proxy_pool=proxy_pool, client=client, user_agent=user_agent,
+            store=store,
         )
         price_confirmed_pct = (sum(1 for p in merged if p.price is not None) / len(merged)) if merged else None
     except Exception:

@@ -39,12 +39,12 @@ Most of what used to be a guess here is now a confirmed fact:
   with clean id/name/brand/category/price data — confirmed real, and now
   `lidl_parser.py`'s primary extraction path (`extract_gridbox_products`).
   Unit price/size come from the tile's visible price text alongside it.
-- **The "select your store" prompt did NOT block a real search** — a
-  plain query returned real, generically-priced results with no store/zip
-  ever set. The store/zip session-binding MECHANISM itself (cookie? query
-  param?) is still unconfirmed — `--zip`/`--store-id` are recorded on
-  every output row, but no engine here has been confirmed to actually SET
-  a region yet.
+- **Prices depend on the store, and the store is a cookie** (confirmed
+  2026-10-18). With no store picked, a search returns default prices; the
+  site's store picker sets four cookies (`st`, `wh`, `zn`, `ar`) and from
+  then on the same gallon of whole milk reads $4.25 in Weehawken NJ, $5.09
+  in Philadelphia and $2.57 in Charlotte instead of $3.48. `--store-id` /
+  `--zip` set those cookies in every engine — see `lidl_stores.py`.
 - **No bot-challenge of any kind was hit on lidl.com** in this capture —
   clean end to end, in contrast to skyscanner-scraper's sibling repo,
   which served a real, immediate PerimeterX challenge in the same session.
@@ -62,9 +62,9 @@ Most of what used to be a guess here is now a confirmed fact:
   has been exercised by the actual scraper, not a hand-driven browser
   session — the single biggest remaining gap this repo had (see
   `TESTING.md` step 2) is now closed.
-- **Still unconfirmed**: the store/zip session-binding mechanism.
-  Discounted tiles and images were confirmed on 2026-10-18 against a real
-  weekly-deals listing. Batched virtual-grid pagination and
+- **Still unconfirmed**: the Scraping Browser path (`--cdp-endpoint`) has
+  not been run live. Store selection, sorting, aisle listings, product
+  pages, discounted tiles and images were all confirmed on 2026-10-18. Batched virtual-grid pagination and
   the real `View More Products` control are now live-verified.
 - **The architecture — exit codes, the output contract, dedupe,
   credential redaction, CLI validation, all three engines importing
@@ -112,11 +112,19 @@ shows what was picked up without ever printing a secret.
 # a product search
 python3 playwright_scraper.py --query "whole milk" --format json --out lidl_results.json
 
-# with a region and a result cap
-python3 playwright_scraper.py --query "sourdough bread" --zip 11803 --max-results 20
+# priced at one store, by store number or by zip, with a result cap
+python3 playwright_scraper.py --query "sourdough bread" --store-id US01449 --max-results 20
+python3 playwright_scraper.py --query "sourdough bread" --zip 07086
 
-# a category path copied from lidl.com's own navigation
-python3 playwright_scraper.py --category food-wine/s10068374
+# cheapest first (also: price_desc, newest)
+python3 playwright_scraper.py --query milk --sort price_asc
+
+# an aisle or a weekly-deals listing, as a path copied from lidl.com's navigation
+python3 playwright_scraper.py --category h/cheese-dairy-eggs/h10095761 --max-results 200
+python3 playwright_scraper.py --category aw42-fresh-deals/a10104750
+
+# one product page
+python3 playwright_scraper.py --url "https://www.lidl.com/p/whole-milk/p11675058"
 
 # a full lidl.com URL directly (escape hatch — cannot be combined with
 # --query/--category; a typed --query/--category also wins over LIDL_URL)
@@ -149,10 +157,17 @@ Selenium) — see "What this repo deliberately does NOT apply from a
 fingerprint" below. `--captcha-api` overrides the 2Captcha REST base URL
 (testing only). `--min-score` is 2Captcha's own `minScore` field on a
 `RecaptchaV3Task` request (0.3 default, matching the rest of the family).
-`--store-id` is recorded on output rows only — there is no confirmed way
-yet to select a store by id directly (see "Read this before trusting a
-run" above); `--zip` is threaded into the search URL as a best-effort
-guess at how region selection might work.
+`--store-id` (`US01449` or `1449`) prices the run at that store; `--zip`
+picks the store in that zip, or the numerically closest one sharing its
+first three digits, and logs which. Either looks the store up in Lidl's
+store API with the public key the site's own store search sends, read
+from the site at run time, and every row then records the store actually
+used. That lookup is made directly from this machine, not through
+`--proxy` or `--cdp-endpoint`. A store that does not exist is a usage error (exit 2); an
+unreachable store API is exit 5. `--category` takes a path from the
+site's navigation: `h/…/h…` aisle listings, `…/a…` weekly-deals
+listings, or `…/s…` pages, which are often landing pages with no product
+grid. `--max-scrolls` defaults to `max(20, --max-results / 4 + 10)`.
 
 ### Family flags that don't apply here — and why
 
@@ -195,8 +210,9 @@ columns after:
 ```
 sku, source, category, title, brand, price, currency, price_source, product_url,
 image_url, scraped_at,
-unit_price, unit_size, original_price, discount_pct, is_weekly_deal,
-lidl_plus_price, deal_valid_from, deal_valid_until, store_id, zip_code
+unit_price, unit_price_per, unit_size, original_price, discount_pct,
+is_weekly_deal, lidl_plus_price, deal_valid_from, deal_valid_until, store_id,
+zip_code
 ```
 
 Unlike skyscanner-scraper's flight itineraries, a Lidl catalog item
@@ -285,14 +301,21 @@ site):
   unaffected. If injection is added later, each page still gets at most one
   paid solve (`captcha_solver.SOLVES_PER_PAGE`), shared by every scroll
   round.
-- **How lidl.com keys a session to a store/zip is unconfirmed** — see
-  "Read this before trusting a run" above. `--zip`/`--store-id` record
-  intent and annotate output rows; they are not confirmed to change what
-  a search actually returns yet.
+- **Some stores answer every search with "no match".** On 2026-10-18,
+  US01575 (New York 10001) made a search for whole milk return a 404 with
+  Lidl's no-match page. Such a run ends empty (exit 4), not blocked. The
+  same page, without a store, can also show a handful of unrelated
+  products under its no-match message; those are never returned as
+  results.
+- **`unit_price` is quoted per the store's unit.** `unit_price_per` names
+  it: the same gallon is `0.03` per `fl.oz.` with no store and `1.06` per
+  `qt.` at US01449, so compare unit prices only where the units match.
 - **Deal dates are not filled.** Images, `original_price`, `discount_pct`
   and `is_weekly_deal` come from confirmed tile markup, but no tile states
   a deal's validity dates, so `deal_valid_from`/`deal_valid_until` stay
-  null on listings. `price` is what a shopper without the Lidl Plus app
+  null on listings. Deals pages print date ranges, but mostly in teasers
+  for other pages, and a tile on the week-42 page can carry an "In stores
+  starting 10/28" badge, so a page's week is not its tiles' validity. `price` is what a shopper without the Lidl Plus app
   pays; a member price goes to `lidl_plus_price`, and on those tiles
   `unit_price` is null because Lidl prints only the member per-unit price.
 

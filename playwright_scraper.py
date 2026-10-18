@@ -49,7 +49,8 @@ import lidl_parser as lp
 import run_policy as rp
 from captcha_solver import SolveBudget, detect_from_html
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
-from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, Product, finish_run, sku_key as _sku_key
+from lidl_stores import Store, StoreApiError
+from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, EXIT_REMOTE_API_ERROR, Product, finish_run, sku_key as _sku_key
 from proxy_pool import Proxy, ProxyPool, ProxyParseError, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaClient
 
@@ -70,12 +71,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--url", default=None, help="Full lidl.com search/specials URL (or set LIDL_URL). Cannot be combined with --query/--category; a typed --query/--category wins over LIDL_URL")
     p.add_argument("--query", default=None, help="Product search term, e.g. 'whole milk'")
-    p.add_argument("--category", default=None, help="A category path copied from Lidl navigation, e.g. food-wine/s10068374")
-    p.add_argument("--zip", dest="zip_code", default=None, help="US zip code for store/region pricing (mechanism unconfirmed — see lidl_parser.py docstring)")
-    p.add_argument("--store-id", default=None, help="Recorded on output rows only — no confirmed way yet to select a store by id directly (see README)")
+    p.add_argument("--category", default=None, help="A listing path copied from Lidl navigation, e.g. h/cheese-dairy-eggs/h10095761 or aw42-fresh-deals/a10104750 (no leading h/ means /c/)")
+    p.add_argument("--zip", dest="zip_code", default=None, help="Price against the Lidl store in (or nearest within the same area as) this US zip code")
+    p.add_argument("--store-id", default=None, help="Price against this Lidl store, e.g. US01449 or 1449; wins over --zip")
     p.add_argument("--sort", choices=lp.SORT_VALUES, default="relevance")
     p.add_argument("--max-results", type=rp.positive_int, default=30, help="Cap on number of products scraped")
-    p.add_argument("--max-scrolls", type=rp.positive_int, default=20, help="Hard cap on scroll rounds, independent of --stall-rounds")
+    p.add_argument("--max-scrolls", type=rp.positive_int, default=None, help="Hard cap on scroll rounds, independent of --stall-rounds (default: max(20, max-results/4 + 10))")
     p.add_argument("--stall-rounds", type=rp.positive_int, default=4, help="Stop after this many consecutive scrolls add no new product")
     p.add_argument("--scroll-delay", type=rp.nonnegative_float, default=1.5, help="Delay between scroll rounds, seconds")
     p.add_argument("--format", choices=["json", "csv"], default="json")
@@ -158,7 +159,7 @@ async def _connect_over_cdp(pw, cdp_endpoint: str):
 async def scrape_search(
     *, args: argparse.Namespace, start_url: str, browser: Browser,
     proxy_pool: Optional[ProxyPool], client: Optional[TwoCaptchaClient],
-    autosolve: bool, user_agent: Optional[str],
+    autosolve: bool, user_agent: Optional[str], store: Optional[Store] = None,
 ) -> tuple:
     """Returns (products, blocked, remote_api_error, scroll_rounds_done,
     shortfall, stop_reason).
@@ -177,6 +178,11 @@ async def scrape_search(
     proxy = proxy_pool.next() if proxy_pool else None
     log.info("Using proxy %s", proxy.masked() if proxy else "(no local proxy pool — direct connection, or a --cdp-endpoint session providing its own exit)")
     context = await _new_context(browser, proxy, user_agent)
+    if store is not None:
+        await context.add_cookies([
+            {"name": name, "value": value, "domain": "www.lidl.com", "path": "/", "secure": True}
+            for name, value in store.cookies()
+        ])
     page = await context.new_page()
     if autosolve:
         await _enable_scraping_browser_auto_solve(context, page)
@@ -201,7 +207,8 @@ async def scrape_search(
         log.error("Search page permanently failed to load: %s", last_error)
         return [], False, True, 0, False, rp.STOP_NAVIGATION_FAILED
 
-    if status is not None and status >= 400:
+    first_html = await page.content() if status is not None and status >= 400 else ""
+    if rp.status_means_blocked(status, first_html):
         # A 404 here (unlike this repo's own build-time fetches — see
         # lidl_parser.py module docstring) is a REAL browser navigation
         # against a REAL client-side app: if the SPA router 404s under a
@@ -241,13 +248,6 @@ async def scrape_search(
         result = lp.safe_parse_search_results(
             html, zip_code=args.zip_code, store_id=args.store_id, max_results=args.max_results,
         )
-        if result.source_used == "none" and round_num == 0 and not blocked:
-            log.warning(
-                "No products recognised on the first render — either this search "
-                "genuinely has no results, or lidl_parser.py's selectors need "
-                "updating for the current lidl.com markup (see its module "
-                "docstring). Re-run with --dump-html to inspect the captured page."
-            )
 
         round_skus = {_sku_key(p) for p in result.products}
         new_skus = round_skus - seen_skus
@@ -313,6 +313,7 @@ async def scrape_search(
         final_html=final_html, collected=len(merged), max_results=args.max_results,
         blocked=blocked, loop_reason=loop_reason, scroll_failed=scroll_error,
     )
+    rp.warn_if_nothing_found(collected=len(merged), blocked=blocked, stop_reason=stop_reason, logger=log)
 
     if args.dump_html:
         Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
@@ -339,6 +340,15 @@ async def run(args: argparse.Namespace) -> int:
               f"pip install -r requirements-playwright.txt && playwright install chromium", file=sys.stderr)
         return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
+    rp.apply_scroll_default(args)
+    try:
+        store = rp.resolve_store(args)
+    except rp.UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_BAD_USAGE
+    except StoreApiError as exc:
+        log.error("Could not look up the Lidl store to price against: %s", exc)
+        return EXIT_REMOTE_API_ERROR
 
     try:
         proxies = load_proxies(args.proxy, args.proxy_file)
@@ -389,7 +399,7 @@ async def run(args: argparse.Namespace) -> int:
                 autosolve = bool(args.cdp_endpoint) and args.solve_captcha != "off"
                 merged, blocked, remote_api_error, rounds, scroll_error, stop_reason = await scrape_search(
                     args=args, start_url=start_url, browser=browser, proxy_pool=proxy_pool,
-                    client=client, autosolve=autosolve, user_agent=user_agent,
+                    client=client, autosolve=autosolve, user_agent=user_agent, store=store,
                 )
                 await browser.close()
     except Exception:

@@ -14,14 +14,14 @@ Check Lidl's own site and the Lidl Plus app for anything a formal integration or
 
 ## Read this before you rely on it
 
-**Updated 2026-09-20**: the selectors and embedded-data shape below are no longer a guess — they're confirmed against a real, browser-rendered capture of lidl.com, and `playwright_scraper.py` has now been run live against the real site end-to-end (exit code 0, real products, prices that check out against their own unit prices). The real search URL is `https://www.lidl.com/q/search?q=<query>` (Nuxt.js, not Next.js as originally guessed); the primary data source is each result tile's `data-gridbox-impression` DOM attribute. Two things are still genuinely unconfirmed: the exact markup of a discounted/"weekly deal" tile (none has been captured yet), and the store/zip session-binding mechanism. The architecture (exit codes, output schema, dedupe, credential handling, all three engines) is real and tested, as it was before. Full honesty section, with the real captured facts and what's still open, in the [repository README](https://github.com/2scraper/lidl-scraper#readme) — read it before you point this at anything that matters.
+**Updated 2026-09-20**: the selectors and embedded-data shape below are no longer a guess — they're confirmed against a real, browser-rendered capture of lidl.com, and `playwright_scraper.py` has now been run live against the real site end-to-end (exit code 0, real products, prices that check out against their own unit prices). The real search URL is `https://www.lidl.com/q/search?q=<query>` (Nuxt.js, not Next.js as originally guessed); the primary data source is each result tile's `data-gridbox-impression` DOM attribute. Since 2026-10-18 discounted and Lidl Plus prices, product pages, sorting and store selection (`--store-id`/`--zip`, which really change the prices a search returns) are confirmed live as well; only the Scraping Browser path has not been run live yet. The architecture (exit codes, output schema, dedupe, credential handling, all three engines) is real and tested, as it was before. Full honesty section, with the real captured facts and what's still open, in the [repository README](https://github.com/2scraper/lidl-scraper#readme) — read it before you point this at anything that matters.
 
 ## What you get
 
 - Free, open-source scraper, one script per engine — **Playwright** (primary, local-first), **Selenium**, and **Puppeteer** (via pyppeteer), all producing the identical output schema and exit codes
 - Search by product term, or browse a weekly-deals/specials category
 - Reads lidl.com's own schema.org structured product data first, with an embedded-state and DOM fallback — same family principle as this project's sibling scrapers
-- Grocery-specific fields other 2scraper repos don't need: unit price, unit size, original (pre-discount) price, discount %, weekly-deal flag, and the store/zip a price reflects
+- Grocery-specific fields other 2scraper repos don't need: unit price and its unit, unit size, original (pre-discount) price, discount %, weekly-deal flag, Lidl Plus member price, and the store a price reflects
 - JSON and CSV export, with a documented `Product` schema and a `.meta.json` sidecar on every completed/partial run
 - Optional 2Captcha integration, wired in but never required to get started
 
@@ -36,7 +36,7 @@ Check Lidl's own site and the Lidl Plus app for anything a formal integration or
 
 ## Who this is for
 
-Grocery-price researchers, deal-tracking tools, and anyone who wants Lidl US search/weekly-deal results in a script rather than a browser tab. The core search/product parsing is now confirmed against a real, live run (see above) — weekly-deal/discount markup and store/zip selection are the two pieces still a documented work in progress (see README).
+Grocery-price researchers, deal-tracking tools, and anyone who wants Lidl US search/weekly-deal results in a script rather than a browser tab. Search, aisle, deals and product parsing, and per-store pricing, are confirmed against real, live runs (see above).
 
 ## Get started
 

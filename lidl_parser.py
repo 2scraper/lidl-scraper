@@ -84,12 +84,9 @@ guessed, unless marked otherwise:
     2026-10-18 — see `extract_gridbox_products()`. Weekly-deal listings
     live at `/c/{slug}/a{numeric-id}` (e.g. `/c/aw42-fresh-deals/
     a10104750`), not the `s{id}` category scheme.
-  - Still UNCONFIRMED: how lidl.com keys a session to a specific
-    store/zip (cookie? query param? the store-picker's own POST?) —
-    `--zip`/`--store-id` are
-    still accepted and threaded through to `Product` so a run at least
-    records which region was asked for, not necessarily which one the
-    site actually used.
+  - The store a page is priced for is a set of cookies, not a URL param
+    (confirmed 2026-10-18) — see `lidl_stores.py`. Prices differ by
+    store; with no store set the site serves default prices.
   - Sibling repo note, confirmed the same session: skyscanner.com served
     an immediate, real PerimeterX "Are you a person or a robot?" bot
     challenge to a plain browser visit — re-confirming the incident
@@ -135,10 +132,16 @@ log = logging.getLogger("lidl_parser")
 BASE_URL = "https://www.lidl.com"
 SOURCE = "lidl.com"
 
-SORT_VALUES = ("relevance", "price_asc", "price_desc")  # TODO: verify live — the real search
-                                                          # UI's sort control/param name is still
-                                                          # unconfirmed (see module docstring;
-                                                          # only `q` itself was confirmed).
+# CLI value -> the `sort` param the real search page's own "Sort By" control
+# links to (confirmed 2026-10-18; `price_asc` itself makes the site serve a
+# page with no grid at all).
+_SORT_PARAMS = {
+    "relevance": None,
+    "price_asc": "price",
+    "price_desc": "price-desc",
+    "newest": "firstOnlineDate-desc",
+}
+SORT_VALUES = tuple(_SORT_PARAMS)
 
 MIN_CARD_MATCHES = 2  # per family invariant (stockx-scraper's product_parser.py /
                        # skyscanner-scraper's flight_parser.py MIN_CARD_MATCHES):
@@ -162,7 +165,6 @@ def search_url(
     *,
     query: Optional[str] = None,
     category: Optional[str] = None,
-    zip_code: Optional[str] = None,
     sort: str = "relevance",
 ) -> str:
     """Builds a lidl.com product-search or category-browse URL.
@@ -170,45 +172,52 @@ def search_url(
     Confirmed real (2026-09-20 browser capture): a plain search is
     `https://www.lidl.com/q/search?q=<query>` — the `q` param name and
     `/q/search` path are both taken straight from the real request the
-    site's own search box issued, not guessed. `category` is expected to
-    already be in the site's own confirmed-real shape, `{slug}/s{id}`
-    (e.g. `"food-wine/s10068374"`, taken verbatim from a homepage nav
-    link) — this function does not further validate or reshape it.
-    `sort`/`zip` remain best-effort guesses (# TODO: verify live) at how
-    they'd be expressed as query params; this capture only exercised a
-    plain query with neither. Exactly one of `query`/`category` is
-    expected — `query` takes priority if both are given, matching
+    site's own search box issued, not guessed. `category` is a path copied
+    from the site's own navigation. Three confirmed shapes, 2026-10-18:
+    `{slug}/s{id}` (a `/c/` landing page, e.g. `"food-wine/s10068374"`,
+    which may hold no product grid at all), `{slug}/a{id}` (a `/c/`
+    weekly-deals listing) and `h/{slug}/h{id}` (an aisle listing, e.g.
+    `"h/cheese-dairy-eggs/h10095761"`). A path without a leading `h/` or
+    `c/` goes under `/c/`. The store a run prices against is a cookie, not
+    a URL param — see `lidl_stores.py`. Exactly one of `query`/`category`
+    is expected — `query` takes priority if both are given, matching
     stockx-scraper/skyscanner-scraper's own "most specific input wins"
     convention for overlapping selector inputs.
     """
     if not query and not category:
         raise ValueError("search_url() needs a query or a category id")
+    if sort not in _SORT_PARAMS:
+        raise ValueError(f"unknown sort {sort!r}; expected one of {', '.join(SORT_VALUES)}")
 
     if query:
         path = "/q/search"
         params: Dict[str, str] = {"q": query.strip()}
     else:
         category_path = category.strip().strip("/")  # type: ignore[union-attr]
-        path = f"/c/{category_path}"
+        if not category_path.startswith(("c/", "h/")):
+            category_path = f"c/{category_path}"
+        path = f"/{category_path}"
         params = {}
 
-    if sort and sort != "relevance":
-        params["sort"] = sort
-    if zip_code:
-        # TODO: verify live — completely unconfirmed whether lidl.com reads
-        # a store/region from a query param at all, vs. a cookie set only
-        # after a UI interaction (the store-picker flyer's own request was
-        # not captured this session). Included so a future capture can
-        # confirm or refute this in one run rather than needing a second
-        # guess added later.
-        params["zip"] = zip_code
+    if _SORT_PARAMS[sort]:
+        params["sort"] = _SORT_PARAMS[sort]
 
     return f"{BASE_URL}{path}" + (f"?{urlencode(params)}" if params else "")
 
 
 def is_search_url(url: str) -> bool:
     path = urlparse(url).path
-    return path.startswith("/q/search") or path.startswith("/c/") or path.startswith("/p/")
+    return path.startswith(("/q/search", "/c/", "/h/", "/p/"))
+
+
+# The real no-match page (confirmed 2026-10-18, `/q/search?q=zzqxwvplm`)
+# prints this AND fills an ordinary product grid, with its own "5 Products"
+# counter, with unrelated fallback items.
+_NO_MATCH_TEXT = "no match could be found for your search term"
+
+
+def is_no_match_page(html: str) -> bool:
+    return _NO_MATCH_TEXT in html.lower()
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +235,17 @@ def make_sku(*, product_id: Optional[str], product_url: Optional[str]) -> str:
     return f"lidl-url-{digest}"
 
 
+_PRODUCT_ID_RE = re.compile(r"/p(\d+)/?$")
+
+
+def _product_id_from_url(product_url: Optional[str]) -> Optional[str]:
+    """The listing tile's own id (`data-gridbox-impression` "id") is the
+    `/p{id}` at the end of the product URL; a product page's JSON-LD `sku`
+    can carry a variant suffix on top of it ("11675058001")."""
+    m = _PRODUCT_ID_RE.search(urlparse(product_url).path) if product_url else None
+    return m.group(1) if m else None
+
+
 def _clean_product_url(href: Optional[str]) -> Optional[str]:
     """Strips the real site's `#searchTrackingMasterId=...` fragment (and
     resolves a relative href) — confirmed real: the fragment carries
@@ -237,6 +257,10 @@ def _clean_product_url(href: Optional[str]) -> Optional[str]:
     href = href.split("#", 1)[0]
     if not href:
         return None
+    parsed = urlparse(href)
+    if parsed.netloc in ("lidl.com", "www.lidl.com"):
+        # A product page's JSON-LD names the bare host; listings link www.
+        return f"{BASE_URL}{parsed.path}" + (f"?{parsed.query}" if parsed.query else "")
     return href if href.startswith("http") else f"{BASE_URL}{href}"
 
 
@@ -255,21 +279,24 @@ _DISCOUNT_BADGE_RE = re.compile(r"-\s*(\d+(?:\.\d+)?)\s*%")
 
 def _split_unit_footer(text: Optional[str]) -> tuple:
     """Splits the confirmed-real concatenated footer text (e.g.
-    `"128 fl.oz.$ 0.03 per fl.oz."`) into `(unit_size, unit_price)`. The
-    size and per-unit price are two separate child elements on the real
-    page with no separator between their text nodes, hence the regex
-    rather than a simple split."""
+    `"128 fl.oz.$ 0.03 per fl.oz."`) into `(unit_size, unit_price,
+    unit_price_per)`. The size and per-unit price are two separate child
+    elements on the real page with no separator between their text nodes,
+    hence the regex rather than a simple split. The unit is the store's
+    choice: the same gallon reads "per fl.oz." with no store and "per qt."
+    at US01449 (confirmed 2026-10-18), so it is kept, not assumed."""
     if not text:
-        return None, None
+        return None, None, None
     m = _UNIT_FOOTER_RE.match(text.strip())
     if not m:
-        return None, None
+        return None, None, None
     size = m.group("size").strip() or None
     try:
         unit_price = float(m.group("unit_price").replace(",", ""))
     except ValueError:
         unit_price = None
-    return size, unit_price
+    per = m.group("unit").strip() if m.group("unit") else "each"
+    return size, unit_price, per
 
 
 def _parse_main_price(text: Optional[str]) -> Optional[float]:
@@ -285,6 +312,72 @@ def _parse_main_price(text: Optional[str]) -> Optional[float]:
         return float(m.group(0).replace(",", ""))
     except ValueError:
         return None
+
+
+@dataclass
+class _PriceBlock:
+    price: Optional[float]
+    stroke_price: Optional[float]
+    badge_text: Optional[str]
+    lidl_plus_price: Optional[float]
+    unit_size: Optional[str]
+    unit_price: Optional[float]
+    unit_price_per: Optional[str]
+
+    def discount_against(self, price: float) -> tuple:
+        """(original_price, discount_pct) for a public discount on `price`,
+        or (None, None). Lidl's own rounded badge wins over arithmetic."""
+        if self.stroke_price is None or self.stroke_price <= price:
+            return None, None
+        m = _DISCOUNT_BADGE_RE.search(self.badge_text) if self.badge_text else None
+        pct = float(m.group(1)) if m else round((1 - price / self.stroke_price) * 100, 1)
+        return self.stroke_price, pct
+
+
+def _read_price_block(container) -> _PriceBlock:
+    """Reads one `.ods-price` block — a listing tile or a product page's
+    buybox, which render the same component (confirmed 2026-10-18). See
+    `extract_gridbox_products()` for the shapes and the Lidl Plus rules."""
+    stroke_el = container.select_one(".ods-price__stroke-price s")
+    stroke_price = _parse_main_price(stroke_el.get_text(strip=True) if stroke_el else None)
+
+    lidl_plus_price = None
+    if container.select_one(".ods-price__lidl-plus-hint"):
+        # The member price is the outer block's own value, never the
+        # one nested in `.ods-price__comparison`.
+        member_els = [el for el in container.select(".ods-price__value")
+                      if not el.find_parent(class_="ods-price__comparison")]
+        lidl_plus_price = _parse_main_price(member_els[-1].get_text(strip=True) if member_els else None)
+        public = container.select_one(".ods-price__comparison .ods-price")
+        if public is not None:
+            price_el = public.select_one(".ods-price__value")
+            badge_el = public.select_one(".ods-price__box-content-text-el")
+            price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
+        else:
+            # Member-only discount: what everyone else pays is the
+            # struck-through price, with no public discount.
+            badge_el = None
+            price = stroke_price
+            stroke_price = None
+    else:
+        price_el = container.select_one(".ods-price__value") or container.select_one(".ods-price__main-wrapper")
+        badge_el = container.select_one(".ods-price__box-content-text-el")
+        price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
+
+    # A block with a Lidl Plus comparison nests a second `.ods-price`
+    # whose own footer is empty, ahead of the real one.
+    footer_texts = [el.get_text(strip=True) for el in container.select(".ods-price__footer")]
+    unit_size, unit_price, unit_price_per = _split_unit_footer(next((t for t in footer_texts if t), None))
+    if lidl_plus_price is not None:
+        # the footer's per-unit price is the member one, not `price`'s
+        unit_price = unit_price_per = None
+
+    return _PriceBlock(
+        price=price, stroke_price=stroke_price,
+        badge_text=badge_el.get_text(strip=True) if badge_el else None,
+        lidl_plus_price=lidl_plus_price, unit_size=unit_size, unit_price=unit_price,
+        unit_price_per=unit_price_per,
+    )
 
 
 def extract_gridbox_products(
@@ -344,32 +437,9 @@ def extract_gridbox_products(
             brand = brand_el.get_text(strip=True)
         brand = brand or impression.get("brand")
 
-        stroke_el = tile.select_one(".ods-price__stroke-price s")
-        stroke_price = _parse_main_price(stroke_el.get_text(strip=True) if stroke_el else None)
-
-        lidl_plus_price = None
-        if tile.select_one(".ods-price__lidl-plus-hint"):
-            # The member price is the outer block's own value, never the
-            # one nested in `.ods-price__comparison`.
-            member_els = [el for el in tile.select(".ods-price__value")
-                          if not el.find_parent(class_="ods-price__comparison")]
-            lidl_plus_price = _parse_main_price(member_els[-1].get_text(strip=True) if member_els else None)
-            public = tile.select_one(".ods-price__comparison .ods-price")
-            if public is not None:
-                price_el = public.select_one(".ods-price__value")
-                badge_el = public.select_one(".ods-price__box-content-text-el")
-                price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
-            else:
-                # Member-only discount: what everyone else pays is the
-                # struck-through price, with no public discount.
-                badge_el = None
-                price = stroke_price
-                stroke_price = None
-        else:
-            price_el = tile.select_one(".ods-price__value") or tile.select_one(".ods-price__main-wrapper")
-            badge_el = tile.select_one(".ods-price__box-content-text-el")
-            price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
-        if price is None and lidl_plus_price is None:
+        block = _read_price_block(tile)
+        price = block.price
+        if price is None and block.lidl_plus_price is None:
             # data-gridbox-impression carries a clean numeric price even
             # when the visible-text selector above doesn't match (e.g. a
             # markup variant) — confirmed present on every real tile.
@@ -378,21 +448,7 @@ def extract_gridbox_products(
                 price = float(raw_price)
         if price is None:
             continue  # no usable price anywhere on this tile — skip rather than fabricate a row
-
-        # A tile with a Lidl Plus comparison nests a second `.ods-price`
-        # whose own footer is empty, ahead of the real one.
-        footer_texts = [el.get_text(strip=True) for el in tile.select(".ods-price__footer")]
-        unit_size, unit_price = _split_unit_footer(next((t for t in footer_texts if t), None))
-        if lidl_plus_price is not None:
-            unit_price = None  # the footer's per-unit price is the member one, not `price`'s
-
-        original_price = stroke_price
-        if original_price is not None and original_price <= price:
-            original_price = None
-        discount_pct = None
-        if original_price is not None:
-            m = _DISCOUNT_BADGE_RE.search(badge_el.get_text(strip=True)) if badge_el else None
-            discount_pct = float(m.group(1)) if m else round((1 - price / original_price) * 100, 1)
+        original_price, discount_pct = block.discount_against(price)
 
         img_el = tile.select_one("img.odsc-picture__img[src]")
         image_url = img_el.get("src") if img_el else None
@@ -414,12 +470,13 @@ def extract_gridbox_products(
             product_url=product_url,
             image_url=image_url,
             scraped_at=_now_iso(),
-            unit_price=unit_price,
-            unit_size=unit_size,
+            unit_price=block.unit_price,
+            unit_price_per=block.unit_price_per,
+            unit_size=block.unit_size,
             original_price=original_price,
             discount_pct=discount_pct,
             is_weekly_deal=bool(original_price and discount_pct),
-            lidl_plus_price=lidl_plus_price,
+            lidl_plus_price=block.lidl_plus_price,
             deal_valid_from=None,
             deal_valid_until=None,
             store_id=store_id,
@@ -528,6 +585,12 @@ def _price_from_offers(node: dict) -> tuple:
     return price, currency, original_price, discount_pct, valid_until
 
 
+_SIZE_BULLET_RE = re.compile(
+    r"^\d[\d.,/ ]*\s*(?:fl\.?\s*oz|oz|lbs?|ct|count|pk|pack|pieces?|g|kg|ml|l|gal(?:lon)?|qt|pt)\.?$",
+    re.IGNORECASE,
+)
+
+
 def _unit_price_from_node(node: dict) -> tuple:
     """# TODO: verify live — the real product-detail page captured this
     session put unit size in `description` (`"<ul><li>16 oz.</li></ul>"`)
@@ -550,11 +613,15 @@ def _unit_price_from_node(node: dict) -> tuple:
                 unit_size = s.get("unitText") or s.get("unitCode")
                 return unit_price, unit_size
 
+    # The real description is a bullet list of claims with the size as one
+    # bullet ("<li>refrigerated</li><li>32 oz.</li>"); only a bullet that
+    # reads as a size is taken, never the run-together text of all of them.
     description = node.get("description")
     if isinstance(description, str):
-        text = BeautifulSoup(description, "html.parser").get_text(strip=True)
-        if text:
-            return None, text
+        bullets = [li.get_text(strip=True) for li in BeautifulSoup(description, "html.parser").find_all("li")]
+        sizes = [b for b in bullets if _SIZE_BULLET_RE.match(b)]
+        if sizes:
+            return None, sizes[-1]
     return None, None
 
 
@@ -581,12 +648,12 @@ def _json_ld_node_to_product(node: dict, *, zip_code: Optional[str], store_id: O
     if price is None:
         return None  # no usable price on this node — skip rather than fabricate a row
 
-    product_id = _product_id_from_node(node)
     offers = node.get("offers")
     if isinstance(offers, list):
         offers = next((offer for offer in offers if isinstance(offer, dict)), None)
     offers_url = offers.get("url") if isinstance(offers, dict) else None
     product_url = _clean_product_url(node.get("url") or offers_url)
+    product_id = _product_id_from_url(product_url) or _product_id_from_node(node)
     image = node.get("image")
     if isinstance(image, list):
         image = next((item for item in image if isinstance(item, (str, dict))), None)
@@ -630,6 +697,28 @@ def _json_ld_node_to_product(node: dict, *, zip_code: Optional[str], store_id: O
 # nothing found in this capture required it (the DOM data-attribute path
 # in `extract_gridbox_products()` covers what was needed instead).
 # --------------------------------------------------------------------------- #
+def _apply_buybox(product: Product, soup) -> None:
+    """A product page's JSON-LD carries only the public price. Its buybox
+    renders the same `.ods-price` block as a listing tile (confirmed
+    2026-10-18 on the red onions, skirt steak and mini avocados pages), so
+    the deal, Lidl Plus and unit fields come from there."""
+    container = soup.select_one(".buybox-one__price")
+    if container is None or container.select_one(".ods-price__value") is None:
+        return
+    block = _read_price_block(container)
+    if block.price is not None:
+        product.price = block.price
+        product.price_source = "dom"
+    original_price, discount_pct = block.discount_against(product.price)
+    product.original_price = original_price
+    product.discount_pct = discount_pct
+    product.is_weekly_deal = bool(original_price and discount_pct)
+    product.lidl_plus_price = block.lidl_plus_price
+    product.unit_size = block.unit_size
+    product.unit_price = block.unit_price
+    product.unit_price_per = block.unit_price_per
+
+
 def extract_next_data(html: str) -> Optional[dict]:
     soup = BeautifulSoup(html, "html.parser")
     tag = soup.find("script", id="__NEXT_DATA__")
@@ -855,13 +944,16 @@ def _parse_result_cards_from_dom(
 @dataclass
 class SearchResult:
     products: List[Product]
-    source_used: str  # "dom_gridbox" | "embedded_json" | "dom" | "none"
+    source_used: str  # "dom_gridbox" | "embedded_json" | "dom" | "no_match" | "none"
 
 
 def parse_search_results(
     html: str, *, zip_code: Optional[str] = None, store_id: Optional[str] = None,
     max_results: Optional[int] = None,
 ) -> SearchResult:
+    if is_no_match_page(html):
+        return SearchResult(products=[], source_used="no_match")
+
     gridbox_products = extract_gridbox_products(
         html, zip_code=zip_code, store_id=store_id, max_results=max_results,
     )
@@ -878,6 +970,8 @@ def parse_search_results(
                 products.append(p)
             if max_results and len(products) >= max_results:
                 break
+        if len(products) == 1:
+            _apply_buybox(products[0], BeautifulSoup(html, "html.parser"))
         if products:
             return SearchResult(products=products, source_used="embedded_json")
 
