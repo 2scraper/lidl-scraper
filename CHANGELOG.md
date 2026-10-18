@@ -9,6 +9,46 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-18
+
+> **Behaviour changes in this batch.**
+> - `--store-id`/`--zip` now choose the store a run is priced at, instead
+>   of only annotating rows. They look the store up in Lidl's store API
+>   before the browser starts, so they need network access to lidl.com and
+>   `live.api.schwarz`; a store that does not exist exits 2, an unreachable
+>   store API exits 5. Rows record the store actually used (`US01449`, its
+>   5-digit zip), which can differ from a `--zip` that has no store.
+> - `--zip` no longer adds `?zip=` to the search URL.
+> - New output column `unit_price_per`, right after `unit_price`.
+> - A search Lidl answers with its no-match page exits 4 (empty) with
+>   `stop_reason: no_match`. It used to exit 0 with the unrelated
+>   products that page shows, or exit 3 when the page came as a 404.
+> - `--max-scrolls` defaults to `max(20, --max-results / 4 + 10)`.
+> - `--sort newest` is new.
+> - Product-page rows use the listing's sku (`lidl-11675058`, not JSON-LD's
+>   `lidl-11675058001`) and the `www.lidl.com` URL.
+
+### Fixed
+
+- `--sort price_asc`/`price_desc` sent values the site does not know; `price_asc` got a page with no products at all. They now send `price` and `price-desc`, the values the site's own Sort By control uses.
+- A product page's `unit_size` was every description bullet run together ("pasteurizedhomogenized…gallon"). It now comes from the page's price block, or from a description bullet that reads as a size.
+- A product page lost its old price, discount and Lidl Plus price: its JSON-LD carries only the public price. They now come from the buybox, which renders the same price block as a listing tile.
+- `--category` always prefixed `/c/`, so aisle listings (`/h/…/h…`), where Lidl actually lists products, could only be reached through `--url`. A path starting with `h/` now goes under `/h/`.
+- The Playwright engine warned "No products recognised on the first render" on successful aisle runs, whose grid fills in after the first render. All three engines now warn once, at the end of a run that found nothing.
+- pyppeteer on Apple Silicon died with "Browser closed unexpectedly": pyppeteer 2.0 downloads an x86_64 Chromium. It now uses an installed Google Chrome there when `PYPPETEER_EXECUTABLE_PATH` is not set.
+
+### Added
+
+- `lidl_stores.py`: store lookup by number or zip, and the four cookies (`st`, `wh`, `zn`, `ar`) the site's own store picker sets, applied before the first navigation in all three engines.
+- `unit_price_per`: the unit `unit_price` is quoted in. Stores choose it: the same gallon reads 0.03 per `fl.oz.` with no store and 1.06 per `qt.` at US01449.
+- Fixtures from real captures: `tests/fixtures/lidl_product_real.html` (a product page) and `tests/fixtures/lidl_no_match_real.html` (the no-match page with its fallback grid).
+
+### Verified live, 2026-10-18
+
+- `--query "whole milk" --store-id 1449` in all three engines: the gallon at $4.25 (vs $3.48 with no store), rows marked `US01449`/`07086`. `--zip 28202` picked US01497 in Charlotte, with its own prices.
+- `--sort price_asc` and `newest`, `--category h/cheese-dairy-eggs/h10095761 --max-results 200` (complete, 200 rows, no `--max-scrolls` needed), a product page with a Lidl Plus price, the no-match page, and US01575's 404 search, which now exits 4.
+- `diff_runs.py` on real runs: no changes between Selenium and pyppeteer's 60-row runs, none between JSON and CSV of the same search; the three Maola milks it flagged between a morning run and a later one (38.0 → 2.99) were the deal-badge price bug fixed in 0.3.0.
+
 ## [0.3.0] — 2026-10-18
 
 > **Behaviour changes in this batch.**
@@ -232,7 +272,8 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/2scraper/lidl-scraper/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/2scraper/lidl-scraper/releases/tag/v0.1.0

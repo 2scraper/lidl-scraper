@@ -7,7 +7,8 @@ on, kept in ONE place so they cannot drift apart:
     navigation; a negative --scroll-delay crashed one of them mid-run);
   - which start URL a run uses when a LIDL_URL from the environment / .env
     meets a --query/--category the caller actually typed;
-  - why a run stopped, decided from what the page itself states.
+  - why a run stopped, decided from what the page itself states;
+  - which store a run prices against (`--store-id`/`--zip`).
 
 No driver code and no JavaScript lives here.
 """
@@ -18,6 +19,7 @@ import logging
 from typing import Optional, Tuple
 
 import lidl_parser as lp
+import lidl_stores
 
 log = logging.getLogger("run_policy")
 
@@ -89,8 +91,58 @@ def resolve_start_url(args: argparse.Namespace) -> Optional[str]:
     if args.url:
         return args.url
     if builders:
-        return lp.search_url(query=args.query, category=args.category, zip_code=args.zip_code, sort=args.sort)
+        return lp.search_url(query=args.query, category=args.category, sort=args.sort)
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Store
+# --------------------------------------------------------------------------- #
+def resolve_store(args: argparse.Namespace) -> Optional[lidl_stores.Store]:
+    """Look up the store `--store-id`/`--zip` name, and from then on record
+    the store actually used on every row: `args.store_id` becomes its full
+    number and `args.zip_code` its 5-digit zip.
+
+    Raises UsageError for a store that does not exist, and
+    lidl_stores.StoreApiError when the site or its store API cannot be read
+    — the engines report that as a remote failure (exit 5), never as a run
+    priced against no store at all."""
+    try:
+        store = lidl_stores.resolve_store(store_id=args.store_id, zip_code=args.zip_code)
+    except lidl_stores.StoreLookupError as exc:
+        raise UsageError(str(exc)) from None
+    if store is not None:
+        log.info("Pricing against Lidl store %s", store.describe())
+        args.store_id = store.object_number
+        args.zip_code = store.zip5
+    return store
+
+
+# --------------------------------------------------------------------------- #
+# Scroll budget
+# --------------------------------------------------------------------------- #
+DEFAULT_MAX_SCROLLS = 20
+
+
+def default_max_scrolls(max_results: int) -> int:
+    """Live, 2026-10-18: 60 products took 11-14 rounds and 200 took 38, so
+    a fixed 20 stopped a 200-product aisle at 96. One round per four
+    products plus slack, never below the old 20."""
+    return max(DEFAULT_MAX_SCROLLS, max_results // 4 + 10)
+
+
+def apply_scroll_default(args: argparse.Namespace) -> None:
+    if args.max_scrolls is None:
+        args.max_scrolls = default_max_scrolls(args.max_results)
+
+
+# --------------------------------------------------------------------------- #
+# HTTP status of the first navigation
+# --------------------------------------------------------------------------- #
+def status_means_blocked(status: Optional[int], html: str) -> bool:
+    """A status >= 400 counts as blocked, except Lidl's own no-match page,
+    which it serves as a 404 for some stores (see lidl_stores.py)."""
+    return status is not None and status >= 400 and not lp.is_no_match_page(html)
 
 
 # --------------------------------------------------------------------------- #
@@ -106,6 +158,7 @@ STOP_PARSER_FOUND_NOTHING = "parser_found_nothing"
 STOP_NAVIGATION_FAILED = "navigation_failed"
 STOP_CDP_CONNECT_FAILED = "cdp_connect_failed"
 STOP_BLOCKED = "blocked"
+STOP_NO_MATCH = "no_match"
 
 
 def end_of_run(
@@ -125,6 +178,11 @@ def end_of_run(
     if blocked:
         # finish_run reports blocked with no rows as 3, with rows as partial.
         return STOP_BLOCKED, False, False
+    if lp.is_no_match_page(final_html):
+        # The parser drops the unrelated fallback grid this page carries, so
+        # its own "N Products" counter must not read as lost rows.
+        log.warning("Lidl found no match for this search — the products it shows instead are not results.")
+        return STOP_NO_MATCH, False, False
     if total is not None and total > 0 and collected == 0:
         log.error(
             "Lidl's own counter states %d products but the parser recognised none — "
@@ -142,6 +200,19 @@ def end_of_run(
         )
         return STOP_INCOMPLETE_GRID, True, False
     return loop_reason, False, False
+
+
+def warn_if_nothing_found(*, collected: int, blocked: bool, stop_reason: str, logger) -> None:
+    """Said once at the end of an empty run, not on a first render that has
+    not filled its lazy grid yet (an aisle page always looked empty then)."""
+    if collected or blocked or stop_reason in (STOP_NO_MATCH, STOP_PARSER_FOUND_NOTHING):
+        return
+    logger.warning(
+        "No products recognised on this page — either it lists none (a /c/…/s… "
+        "landing page often holds no product grid; aisle listings are /h/…/h… "
+        "paths), or lidl_parser.py's selectors need updating for the current "
+        "lidl.com markup. Re-run with --dump-html to inspect the captured page."
+    )
 
 
 # --------------------------------------------------------------------------- #

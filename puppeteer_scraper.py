@@ -18,7 +18,10 @@ recommendation to prefer it.
 Chromium binary: sourced from `PYPPETEER_EXECUTABLE_PATH` /
 `PUPPETEER_EXECUTABLE_PATH` if set (handy for reusing an existing
 Playwright/system Chromium instead of pyppeteer's own bundled download),
-otherwise pyppeteer's own default.
+otherwise pyppeteer's own default — except on Apple Silicon, where that
+default is an x86_64 Chromium that dies on launch with "Browser closed
+unexpectedly" (pyppeteer 2.0, confirmed 2026-10-18), so an installed
+Google Chrome is used instead when there is one.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ import argparse
 import asyncio
 import logging
 import os
+import platform
 import sys
 import time
 from pathlib import Path
@@ -47,7 +51,8 @@ import env_config
 import lidl_parser as lp
 import run_policy as rp
 from captcha_solver import SolveBudget, detect_from_html
-from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, Product, finish_run, sku_key as _sku_key
+from lidl_stores import Store, StoreApiError
+from output_writer import EXIT_BAD_USAGE, EXIT_CRASH, EXIT_REMOTE_API_ERROR, Product, finish_run, sku_key as _sku_key
 from fingerprint_client import fetch_fingerprint, refuse_if_cdp, user_agent_from
 from proxy_pool import Proxy, ProxyPool, ProxyParseError, is_proxy_dead_error, load_proxies, redact_credentials
 from scraper_api_client import TwoCaptchaClient
@@ -58,7 +63,12 @@ READINESS_WAIT_S = 3.0
 
 log = logging.getLogger("puppeteer_scraper")
 
-_CHROMIUM_EXECUTABLE = os.environ.get("PYPPETEER_EXECUTABLE_PATH") or os.environ.get("PUPPETEER_EXECUTABLE_PATH")
+_MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+_APPLE_SILICON = sys.platform == "darwin" and platform.machine() == "arm64"
+_CHROMIUM_EXECUTABLE = (
+    os.environ.get("PYPPETEER_EXECUTABLE_PATH") or os.environ.get("PUPPETEER_EXECUTABLE_PATH")
+    or (_MAC_CHROME if _APPLE_SILICON and os.path.exists(_MAC_CHROME) else None)
+)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -73,7 +83,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--store-id", default=None)
     p.add_argument("--sort", choices=lp.SORT_VALUES, default="relevance")
     p.add_argument("--max-results", type=rp.positive_int, default=30)
-    p.add_argument("--max-scrolls", type=rp.positive_int, default=20)
+    p.add_argument("--max-scrolls", type=rp.positive_int, default=None)
     p.add_argument("--stall-rounds", type=rp.positive_int, default=4)
     p.add_argument("--scroll-delay", type=rp.nonnegative_float, default=1.5)
     p.add_argument("--format", choices=["json", "csv"], default="json")
@@ -124,6 +134,9 @@ async def _launch(*, headless: bool, proxy: Optional[Proxy], cdp_endpoint: Optio
     kwargs = dict(headless=headless, args=args)
     if _CHROMIUM_EXECUTABLE:
         kwargs["executablePath"] = _CHROMIUM_EXECUTABLE
+    elif _APPLE_SILICON:
+        log.warning("pyppeteer's own Chromium download is x86_64 and does not start on Apple Silicon; "
+                    "set PYPPETEER_EXECUTABLE_PATH to an installed Chrome if the launch fails.")
     return await pyppeteer_launch(**kwargs)
 
 
@@ -156,7 +169,7 @@ async def _maybe_solve_captcha(
 async def scrape_search(
     *, args: argparse.Namespace, start_url: str,
     proxy_pool: Optional[ProxyPool], client: Optional[TwoCaptchaClient], autosolve: bool = False,
-    user_agent: Optional[str] = None,
+    user_agent: Optional[str] = None, store: Optional[Store] = None,
 ) -> Tuple[List[Product], bool, bool, int, bool]:
     """Returns (products, blocked, remote_api_error, scroll_rounds_done,
     shortfall, stop_reason) — see playwright_scraper.scrape_search."""
@@ -177,6 +190,11 @@ async def scrape_search(
     if user_agent:
         await page.setUserAgent(user_agent)
     await _authenticate_if_needed(page, proxy)
+    if store is not None:
+        await page.setCookie(*[
+            {"name": name, "value": value, "url": lp.BASE_URL, "path": "/", "secure": True}
+            for name, value in store.cookies()
+        ])
     if autosolve:
         await _enable_scraping_browser_auto_solve(page)
 
@@ -208,7 +226,8 @@ async def scrape_search(
         log.error("Search page permanently failed to load: %s", last_error)
         return [], False, True, 0, False, rp.STOP_NAVIGATION_FAILED
 
-    if status is not None and status >= 400:
+    first_html = await page.content() if status is not None and status >= 400 else ""
+    if rp.status_means_blocked(status, first_html):
         log.warning("Search page returned HTTP %d — treating as blocked, not empty.", status)
         blocked = True
 
@@ -290,6 +309,7 @@ async def scrape_search(
         final_html=final_html, collected=len(merged), max_results=args.max_results,
         blocked=blocked, loop_reason=loop_reason, scroll_failed=scroll_error,
     )
+    rp.warn_if_nothing_found(collected=len(merged), blocked=blocked, stop_reason=stop_reason, logger=log)
 
     if args.dump_html:
         Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
@@ -316,6 +336,15 @@ async def run(args: argparse.Namespace) -> int:
               f"pip install -r requirements-puppeteer.txt", file=sys.stderr)
         return EXIT_CRASH
     args.out = args.out or _default_out(args.format)
+    rp.apply_scroll_default(args)
+    try:
+        store = rp.resolve_store(args)
+    except rp.UsageError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return EXIT_BAD_USAGE
+    except StoreApiError as exc:
+        log.error("Could not look up the Lidl store to price against: %s", exc)
+        return EXIT_REMOTE_API_ERROR
 
     try:
         proxies = load_proxies(args.proxy, args.proxy_file)
@@ -345,7 +374,7 @@ async def run(args: argparse.Namespace) -> int:
     try:
         merged, blocked, remote_api_error, rounds, scroll_error, stop_reason = await scrape_search(
             args=args, start_url=start_url, proxy_pool=proxy_pool, client=client, autosolve=autosolve,
-            user_agent=user_agent,
+            user_agent=user_agent, store=store,
         )
         price_confirmed_pct = (sum(1 for p in merged if p.price is not None) / len(merged)) if merged else None
     except Exception:
