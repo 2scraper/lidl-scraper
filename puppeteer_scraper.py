@@ -60,6 +60,11 @@ from scraper_api_client import TwoCaptchaClient
 ENGINE_NAME = "puppeteer"
 NAV_TIMEOUT_MS = 30_000
 READINESS_WAIT_S = 3.0
+# pyppeteer's connect() never returns when the endpoint refuses the
+# WebSocket: the Scraping Browser API answers 500 "profile_locked" while
+# another session still holds the profile, pyppeteer's receive loop dies
+# on it, and connect() waits forever (confirmed 2026-10-18).
+CDP_CONNECT_TIMEOUT_S = 30.0
 
 log = logging.getLogger("puppeteer_scraper")
 
@@ -125,7 +130,15 @@ def _dump_path(out_path: str) -> str:
 async def _launch(*, headless: bool, proxy: Optional[Proxy], cdp_endpoint: Optional[str]):
     if cdp_endpoint:
         try:
-            return await pyppeteer_connect(browserWSEndpoint=cdp_endpoint, defaultViewport=None)
+            return await asyncio.wait_for(
+                pyppeteer_connect(browserWSEndpoint=cdp_endpoint, defaultViewport=None), CDP_CONNECT_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                f"CDP connection failed: no answer within {CDP_CONNECT_TIMEOUT_S:.0f}s — the endpoint "
+                "may have refused the WebSocket (the Scraping Browser API does that while another "
+                "session still holds the profile)"
+            ) from None
         except Exception as exc:
             raise RuntimeError(f"CDP connection failed: {redact_credentials(str(exc))}") from None
     args = ["--no-sandbox", "--disable-dev-shm-usage"]
@@ -362,7 +375,7 @@ async def run(args: argparse.Namespace) -> int:
     autosolve = bool(args.cdp_endpoint) and args.solve_captcha != "off"
 
     user_agent = None
-    cdp_refused_fingerprint = refuse_if_cdp(args.cdp_endpoint)
+    cdp_refused_fingerprint = args.fingerprint and refuse_if_cdp(args.cdp_endpoint)
     if args.fingerprint and not cdp_refused_fingerprint:
         if client is None:
             log.warning("--fingerprint requested but no --twocaptcha-key/TWOCAPTCHA_KEY set — continuing without one.")

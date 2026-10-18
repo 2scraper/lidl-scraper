@@ -799,6 +799,25 @@ def _():
             pass
 
 
+@check("pyppeteer: a CDP endpoint that never answers fails within CDP_CONNECT_TIMEOUT_S instead of hanging")
+def _():
+    # pyppeteer's connect() waits forever when the Scraping Browser API
+    # refuses the WebSocket with 500 "profile_locked".
+    async def never(**_kwargs):
+        await asyncio.sleep(3600)
+
+    original_connect, original_timeout = puppeteer_scraper.pyppeteer_connect, puppeteer_scraper.CDP_CONNECT_TIMEOUT_S
+    puppeteer_scraper.pyppeteer_connect, puppeteer_scraper.CDP_CONNECT_TIMEOUT_S = never, 0.2
+    try:
+        try:
+            asyncio.run(puppeteer_scraper._launch(headless=True, proxy=None, cdp_endpoint="ws://u:secret@cb.example:9222"))
+            raise AssertionError("expected RuntimeError")
+        except RuntimeError as exc:
+            assert "CDP connection failed" in str(exc) and "secret" not in str(exc), str(exc)
+    finally:
+        puppeteer_scraper.pyppeteer_connect, puppeteer_scraper.CDP_CONNECT_TIMEOUT_S = original_connect, original_timeout
+
+
 @check("each engine: a malformed --store-id or --zip is EXIT_BAD_USAGE before any network call")
 def _():
     _IMPORT_ERROR_ATTR = {

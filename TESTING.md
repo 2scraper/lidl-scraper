@@ -23,8 +23,10 @@ picker — see `lidl_stores.py`), and `--sort`, `h/…` aisle categories,
 product pages and the no-match page were run live. pyppeteer now picks
 up an installed Google Chrome on Apple Silicon by itself.
 
-Still requiring live verification: the Scraping Browser path
-(`--cdp-endpoint`, which needs a 2Captcha key), and the
+The Scraping Browser path (`--cdp-endpoint`) was run live the same
+evening with Playwright and pyppeteer — see CHANGELOG 0.4.1.
+
+Still requiring live verification: the
 `deal_valid_from`/`deal_valid_until` fields (no tile states a deal's dates;
 the "In stores starting 10/28" badge is an availability date). Offline
 checks remain useful, but do not substitute for these runs.

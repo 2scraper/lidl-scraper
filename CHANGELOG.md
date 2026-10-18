@@ -9,6 +9,20 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-18
+
+### Fixed
+
+- pyppeteer over `--cdp-endpoint` could hang forever. The Scraping Browser API refuses a new WebSocket with 500 `profile_locked` while another session still holds the profile — for a few seconds after the previous run, too — and pyppeteer's `connect()` never returns then. It now gives up after 30 s with the usual "CDP connection failed" (exit 5), as Playwright already did.
+- Every `--cdp-endpoint` run warned "Ignoring --fingerprint" although `--fingerprint` was not passed. The warning now appears only when it was.
+
+### Verified live, 2026-10-18 — the Scraping Browser path
+
+- Playwright and pyppeteer over `--cdp-endpoint` (a US Scraping Browser session): `whole milk` with `--store-id 1449` priced at the store ($4.25) in both, `milk --max-results 60` complete with 60 rows, and the weekly-favorites deals page with the same 53 rows, 18 discounts and 10 Lidl Plus prices as a local run. No credential appeared in any log or output.
+- Selenium refuses a credentialed endpoint with exit 2, as documented.
+- Two runs back to back on one profile can hit `profile_locked`; the second then exits 5. Leave a few seconds between runs.
+- pyppeteer logs "Future exception was never retrieved … Target.detachFromTarget: No session with given id" when it closes the remote browser. It is pyppeteer's own clean-up noise and does not affect the run.
+
 ## [0.4.0] — 2026-10-18
 
 > **Behaviour changes in this batch.**
@@ -272,7 +286,8 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/2scraper/lidl-scraper/compare/v0.1.0...v0.2.0
