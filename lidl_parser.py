@@ -80,13 +80,13 @@ guessed, unless marked otherwise:
     first ~48 may need the "View More Products" control clicked, not just
     scrolled to — UNCONFIRMED whether scrolling alone ever triggers it via
     its own intersection observer.
-  - Still UNCONFIRMED after this capture: the exact shape of a discounted
-    ("weekly deal") tile — none of the tiles captured this session had a
-    strikethrough/original price, so `original_price`/`discount_pct`/
-    `is_weekly_deal` extraction from a real tile remains a best-effort
-    guess (`_TODO_ORIGINAL_PRICE_SELECTORS` below), and how lidl.com keys
-    a session to a specific store/zip (cookie? query param? the store-
-    picker's own POST?) is still unconfirmed — `--zip`/`--store-id` are
+  - Discounted tiles and tile images were confirmed later, on
+    2026-10-18 — see `extract_gridbox_products()`. Weekly-deal listings
+    live at `/c/{slug}/a{numeric-id}` (e.g. `/c/aw42-fresh-deals/
+    a10104750`), not the `s{id}` category scheme.
+  - Still UNCONFIRMED: how lidl.com keys a session to a specific
+    store/zip (cookie? query param? the store-picker's own POST?) —
+    `--zip`/`--store-id` are
     still accepted and threaded through to `Product` so a run at least
     records which region was asked for, not necessarily which one the
     site actually used.
@@ -247,9 +247,10 @@ def _clean_product_url(href: Optional[str]) -> Optional[str]:
 _GRIDBOX_SELECTOR = ".product-grid-box, .odsc-tile[data-gridbox-impression]"
 
 _UNIT_FOOTER_RE = re.compile(
-    r"^(?P<size>.*?)\s*\$\s*(?P<unit_price>[\d.,]+)\s*per\s*(?P<unit>.+)$", re.IGNORECASE
+    r"^(?P<size>.*?)\s*\$\s*(?P<unit_price>[\d.,]+)\s*(?:per\s*(?P<unit>.+)|each)$", re.IGNORECASE
 )
 _MAIN_PRICE_RE = re.compile(r"[\d][\d.,]*")
+_DISCOUNT_BADGE_RE = re.compile(r"-\s*(\d+(?:\.\d+)?)\s*%")
 
 
 def _split_unit_footer(text: Optional[str]) -> tuple:
@@ -295,10 +296,25 @@ def extract_gridbox_products(
     plus the sibling visible-text elements this attribute doesn't carry
     (unit price/size), for every tile in a rendered search-results page.
 
-    `original_price`/`discount_pct`/`is_weekly_deal` are left `None`/
-    `False` here — no discounted tile was captured this session to
-    confirm that shape against (see module docstring); a future capture
-    of an actual weekly-deal tile should fill this in rather than guess.
+    Discounted tiles — confirmed real 2026-10-18 against `/c/aw42-fresh-
+    deals/a10104750`: the old price is `.ods-price__stroke-price s`
+    (`"$ 1.99"`), the site's own rounded badge is
+    `.ods-price__box-content-text-el` (`"-20%"`), and the current price
+    is `.ods-price__value` (`"$1.59*"`). The badge sits INSIDE
+    `.ods-price__main-wrapper`, ahead of the price, so that wrapper's text
+    (`"-20%$1.59*"`) must not be number-matched as a whole.
+
+    Lidl Plus member prices (`.ods-price__lidl-plus-hint`) go to
+    `lidl_plus_price`; `price`, `original_price` and `discount_pct` always
+    describe what a shopper without the app pays. Two confirmed shapes:
+      - public promo AND member price: the public block is nested in
+        `.ods-price__comparison` ("-31%", "$2.19*"); the outer block's own
+        value is the member price ("$1.99*").
+      - member-only discount: the struck-through price is what everyone
+        else pays, so it becomes `price` with no public discount.
+    `data-gridbox-impression` carries the member price on both, so it is
+    never used as `price` for these tiles. Their footer's per-unit price
+    is the member one too, so `unit_price` is left null on them.
     """
     soup = BeautifulSoup(html, "html.parser")
     tiles = soup.select(_GRIDBOX_SELECTOR)
@@ -328,11 +344,32 @@ def extract_gridbox_products(
             brand = brand_el.get_text(strip=True)
         brand = brand or impression.get("brand")
 
-        price = _parse_main_price(
-            (tile.select_one(".ods-price__main-wrapper") or tile).get_text(strip=True)
-            if tile.select_one(".ods-price__main-wrapper") else None
-        )
-        if price is None:
+        stroke_el = tile.select_one(".ods-price__stroke-price s")
+        stroke_price = _parse_main_price(stroke_el.get_text(strip=True) if stroke_el else None)
+
+        lidl_plus_price = None
+        if tile.select_one(".ods-price__lidl-plus-hint"):
+            # The member price is the outer block's own value, never the
+            # one nested in `.ods-price__comparison`.
+            member_els = [el for el in tile.select(".ods-price__value")
+                          if not el.find_parent(class_="ods-price__comparison")]
+            lidl_plus_price = _parse_main_price(member_els[-1].get_text(strip=True) if member_els else None)
+            public = tile.select_one(".ods-price__comparison .ods-price")
+            if public is not None:
+                price_el = public.select_one(".ods-price__value")
+                badge_el = public.select_one(".ods-price__box-content-text-el")
+                price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
+            else:
+                # Member-only discount: what everyone else pays is the
+                # struck-through price, with no public discount.
+                badge_el = None
+                price = stroke_price
+                stroke_price = None
+        else:
+            price_el = tile.select_one(".ods-price__value") or tile.select_one(".ods-price__main-wrapper")
+            badge_el = tile.select_one(".ods-price__box-content-text-el")
+            price = _parse_main_price(price_el.get_text(strip=True) if price_el else None)
+        if price is None and lidl_plus_price is None:
             # data-gridbox-impression carries a clean numeric price even
             # when the visible-text selector above doesn't match (e.g. a
             # markup variant) — confirmed present on every real tile.
@@ -342,10 +379,25 @@ def extract_gridbox_products(
         if price is None:
             continue  # no usable price anywhere on this tile — skip rather than fabricate a row
 
-        unit_size, unit_price = _split_unit_footer(
-            tile.select_one(".ods-price__footer").get_text(strip=True)
-            if tile.select_one(".ods-price__footer") else None
-        )
+        # A tile with a Lidl Plus comparison nests a second `.ods-price`
+        # whose own footer is empty, ahead of the real one.
+        footer_texts = [el.get_text(strip=True) for el in tile.select(".ods-price__footer")]
+        unit_size, unit_price = _split_unit_footer(next((t for t in footer_texts if t), None))
+        if lidl_plus_price is not None:
+            unit_price = None  # the footer's per-unit price is the member one, not `price`'s
+
+        original_price = stroke_price
+        if original_price is not None and original_price <= price:
+            original_price = None
+        discount_pct = None
+        if original_price is not None:
+            m = _DISCOUNT_BADGE_RE.search(badge_el.get_text(strip=True)) if badge_el else None
+            discount_pct = float(m.group(1)) if m else round((1 - price / original_price) * 100, 1)
+
+        img_el = tile.select_one("img.odsc-picture__img[src]")
+        image_url = img_el.get("src") if img_el else None
+        if image_url and not image_url.startswith("http"):
+            image_url = f"{BASE_URL}{image_url}" if image_url.startswith("/") else None
 
         product_id = impression.get("id")
         category = impression.get("categoryPrimary") or impression.get("category")
@@ -360,14 +412,14 @@ def extract_gridbox_products(
             currency="USD",
             price_source="dom",
             product_url=product_url,
-            image_url=None,  # TODO: verify live — image element/attribute for a gridbox tile
-                              # was not captured this session (only price/title/link were).
+            image_url=image_url,
             scraped_at=_now_iso(),
             unit_price=unit_price,
             unit_size=unit_size,
-            original_price=None,   # TODO: verify live — see module docstring
-            discount_pct=None,     # TODO: verify live — see module docstring
-            is_weekly_deal=None,   # TODO: verify live — see module docstring
+            original_price=original_price,
+            discount_pct=discount_pct,
+            is_weekly_deal=bool(original_price and discount_pct),
+            lidl_plus_price=lidl_plus_price,
             deal_valid_from=None,
             deal_valid_until=None,
             store_id=store_id,

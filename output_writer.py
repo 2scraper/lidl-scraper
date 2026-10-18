@@ -90,6 +90,11 @@ class Product:
     record which one this row's price actually reflects, so two runs
     against different regions are never silently conflated by
     `diff_runs.py` as "the same item, price changed".
+
+    `price` is what a shopper without the Lidl Plus app pays; a member-only
+    price shown on the same tile goes to `lidl_plus_price` instead, and
+    `original_price`/`discount_pct`/`is_weekly_deal` describe the public
+    discount only.
     """
 
     # --- family-common ---
@@ -111,6 +116,7 @@ class Product:
     original_price: Optional[float] = None
     discount_pct: Optional[float] = None
     is_weekly_deal: Optional[bool] = None
+    lidl_plus_price: Optional[float] = None
     deal_valid_from: Optional[str] = None
     deal_valid_until: Optional[str] = None
     store_id: Optional[str] = None

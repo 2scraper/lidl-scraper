@@ -266,6 +266,7 @@ def _():
     assert output_writer.PRODUCT_FIELD_NAMES[: len(expected_head)] == expected_head
     tail = output_writer.PRODUCT_FIELD_NAMES[len(expected_head):]
     assert "unit_price" in tail and "zip_code" in tail and "is_weekly_deal" in tail
+    assert "lidl_plus_price" in tail
 
 
 @check("merge_pages dedupes by sku, last-write-wins, in PAGE order not arrival order")
@@ -584,6 +585,58 @@ def _():
     for p in res.products:
         assert p.price_source == "dom"
         assert p.currency == "USD"
+
+
+_REAL_DEALS_FIXTURE = Path(__file__).resolve().parent / "tests" / "fixtures" / "lidl_deals_real.html"
+
+
+@check("extract_gridbox_products reads discounted tiles from the real 2026-10-18 weekly-deals capture")
+def _():
+    with open(_REAL_DEALS_FIXTURE, encoding="utf-8") as f:
+        html = f.read()
+    res = lp.parse_search_results(html)
+    assert res.source_used == "dom_gridbox", res.source_used
+    by_sku = {p.sku: p for p in res.products}
+    assert len(by_sku) == 4, len(by_sku)
+
+    onions = by_sku["lidl-11242052"]
+    # The "-20%" badge renders ahead of "$1.59*" inside .ods-price__main-wrapper;
+    # number-matching that wrapper used to report price=20.0.
+    assert onions.price == 1.59, onions.price
+    assert onions.original_price == 1.99
+    assert onions.discount_pct == 20.0
+    assert onions.is_weekly_deal is True
+    assert onions.unit_size == "2 lb." and onions.unit_price == 0.80
+    assert onions.image_url == "https://www.lidl.com/assets/gcp56066dae.png"
+
+    assert onions.lidl_plus_price is None
+
+    avocados = by_sku["lidl-11241859"]
+    # Public promo price, not the Lidl Plus member price (1.99) the impression blob carries.
+    assert avocados.price == 2.19, avocados.price
+    assert avocados.lidl_plus_price == 1.99
+    assert avocados.original_price == 3.19, "the stroke price renders as '3.19 $' on this tile"
+    assert avocados.discount_pct == 31.0 and avocados.is_weekly_deal is True
+    # The footer's "$ 0.33 each" is 1.99 / 6, the member price per piece.
+    assert avocados.unit_size == "6 Piece" and avocados.unit_price is None
+
+    steak = by_sku["lidl-11320818"]
+    # Member-only discount: a shopper without the app pays the struck-through price.
+    assert steak.price == 11.89, steak.price
+    assert steak.lidl_plus_price == 9.99
+    assert steak.original_price is None and steak.discount_pct is None
+    assert steak.is_weekly_deal is False
+    assert steak.unit_price is None
+
+    field_picks = by_sku["lidl-11238009"]
+    assert field_picks.price == 5.99
+    assert field_picks.original_price is None and field_picks.discount_pct is None
+    assert field_picks.is_weekly_deal is False
+    assert field_picks.unit_size == "1 Piece" and field_picks.unit_price == 5.99
+    assert field_picks.lidl_plus_price is None
+
+    for p in res.products:
+        assert p.image_url and p.image_url.startswith("https://www.lidl.com/assets/"), p.image_url
 
 
 @check("extract_gridbox_products is what parse_search_results tries first (before JSON-LD)")
