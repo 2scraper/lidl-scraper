@@ -9,6 +9,15 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-10-19
+
+### Fixed
+- pyppeteer could not use a proxy with a login and password: `page.authenticate()` relies on `Network.setRequestInterception`, which current Chrome no longer has, so every such run crashed. Proxy credentials are now answered through the CDP `Fetch` domain, and only for the proxy's own challenge. Verified live through an authenticated HTTP proxy with a US residential exit: 10 rows, and wrong credentials do not get through.
+- A `socks5://` proxy with a login and password crashed Playwright with a traceback. It is now refused as bad usage (exit 2) with a message that does not echo the password, since Chromium cannot authenticate to a SOCKS proxy.
+
+### Changed
+- `.gitignore` covers the per-engine `.venv-*/` environments that TESTING.md creates.
+
 ## [0.4.2] — 2026-10-19
 
 ### Fixed
@@ -292,7 +301,8 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/2scraper/lidl-scraper/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/2scraper/lidl-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...v0.4.0

@@ -101,6 +101,16 @@ def parse_proxy_line(line: str) -> Proxy:
     g = m.groupdict()
     login = g["login"] or g["login2"]
     password = g["password"] if g["login"] else g["password2"]
+    scheme = (g["scheme"] or "http").lower()
+    if login and scheme.startswith("socks"):
+        # Chromium (all three engines) cannot authenticate to a SOCKS proxy:
+        # Playwright fails with "Browser does not support socks5 proxy
+        # authentication" (seen live 2026-10-19). Fail as bad usage up front,
+        # without echoing the line, which carries the password.
+        raise ProxyParseError(
+            f"{scheme}:// proxy with a login and password: Chromium cannot authenticate "
+            f"to a SOCKS proxy. Use the provider's HTTP endpoint for the same proxy."
+        )
     return Proxy(
         host=g["host"],
         port=int(g["port"]),

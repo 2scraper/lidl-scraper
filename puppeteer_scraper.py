@@ -154,10 +154,37 @@ async def _launch(*, headless: bool, proxy: Optional[Proxy], cdp_endpoint: Optio
 
 
 async def _authenticate_if_needed(page, proxy: Optional[Proxy]) -> None:
-    if proxy is not None:
-        auth = proxy.pyppeteer_auth_dict()
-        if auth:
-            await page.authenticate(auth)
+    # Not `page.authenticate()`: pyppeteer implements it with
+    # Network.setRequestInterception, which current Chrome no longer has
+    # ("'Network.setRequestInterception' wasn't found", seen live
+    # 2026-10-19). The Fetch domain is what Puppeteer itself moved to.
+    if proxy is None:
+        return
+    auth = proxy.pyppeteer_auth_dict()
+    if not auth:
+        return
+    client = page._client
+
+    async def _continue(event: dict) -> None:
+        try:
+            await client.send("Fetch.continueRequest", {"requestId": event["requestId"]})
+        except Exception:  # noqa: BLE001 — the request may be gone by now
+            pass
+
+    async def _answer(event: dict) -> None:
+        # Credentials go to the proxy only, never to a site's own challenge.
+        if event.get("authChallenge", {}).get("source") == "Proxy":
+            response = {"response": "ProvideCredentials", **auth}
+        else:
+            response = {"response": "Default"}
+        try:
+            await client.send("Fetch.continueWithAuth", {"requestId": event["requestId"], "authChallengeResponse": response})
+        except Exception:  # noqa: BLE001
+            pass
+
+    client.on("Fetch.requestPaused", lambda e: asyncio.ensure_future(_continue(e)))
+    client.on("Fetch.authRequired", lambda e: asyncio.ensure_future(_answer(e)))
+    await client.send("Fetch.enable", {"handleAuthRequests": True, "patterns": [{"urlPattern": "*"}]})
 
 
 async def _enable_scraping_browser_auto_solve(page) -> None:
