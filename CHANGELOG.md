@@ -9,6 +9,12 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-10-19
+
+### Fixed
+- `--fingerprint` never applied a user agent. The live Fingerprint API returns it at `userAgent.userAgent` (and `navigator.userAgent`), not `userAgent.value`, so every run silently kept the browser's own UA. Verified live: the Playwright run now reports the profile's UA in `navigator.userAgent`.
+- A profile without a user agent now logs a warning instead of passing silently.
+
 ## [0.4.1] — 2026-10-18
 
 ### Fixed
@@ -286,7 +292,8 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/2scraper/lidl-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/2scraper/lidl-scraper/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/2scraper/lidl-scraper/compare/v0.2.0...v0.3.0
