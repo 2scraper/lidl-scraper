@@ -97,7 +97,11 @@ def parse_proxy_line(line: str) -> Proxy:
         raise ProxyParseError(f"blank/comment line: {line!r}")
     m = _LINE_RE.match(line)
     if not m:
-        raise ProxyParseError(f"unrecognised proxy format: {line!r}")
+        # Never echo the line: a malformed proxy can still carry a password.
+        raise ProxyParseError(
+            "unrecognised proxy format (expected scheme://login:password@host:port, "
+            "host:port:login:password or host:port)"
+        )
     g = m.groupdict()
     login = g["login"] or g["login2"]
     password = g["password"] if g["login"] else g["password2"]

@@ -314,6 +314,23 @@ def _():
     assert proxy_pool.load_proxies("socks5://host.example:1080", None)[0].scheme == "socks5"
 
 
+@check("a malformed proxy line is never echoed in the parse error (it can carry a password)")
+def _():
+    try:
+        proxy_pool.load_proxies("http://user:secretpass@host.example", None)
+        raise AssertionError("expected ProxyParseError")
+    except proxy_pool.ProxyParseError as exc:
+        assert "secretpass" not in str(exc), str(exc)
+
+
+@check("pyppeteer turns proxy-auth interception off before closing the browser")
+def _():
+    src = (ROOT / "puppeteer_scraper.py").read_text(encoding="utf-8")
+    assert src.count("await _stop_proxy_auth(page, proxy)\n        await browser.close()") == 1
+    assert src.count("await _stop_proxy_auth(page, proxy)\n    await browser.close()") == 1
+    assert src.count("await browser.close()") == 2, "a new close path must stop proxy auth first"
+
+
 @check("proxy_pool parses a credentialed proxy and masks it in logs")
 def _():
     proxies = proxy_pool.load_proxies("http://user:secretpass@host.example:8080", None)
