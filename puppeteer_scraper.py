@@ -187,6 +187,19 @@ async def _authenticate_if_needed(page, proxy: Optional[Proxy]) -> None:
     await client.send("Fetch.enable", {"handleAuthRequests": True, "patterns": [{"urlPattern": "*"}]})
 
 
+async def _stop_proxy_auth(page, proxy: Optional[Proxy]) -> None:
+    """Turn request interception off before the browser closes: a paused
+    request answered while the target is going away leaves pyppeteer's own
+    inner future with an unretrieved "Target closed" error on stderr (seen
+    live in tipranks-scraper, 2026-10-19)."""
+    if proxy is None or not proxy.pyppeteer_auth_dict():
+        return
+    try:
+        await page._client.send("Fetch.disable")
+    except Exception:  # noqa: BLE001 — closing anyway
+        pass
+
+
 async def _enable_scraping_browser_auto_solve(page) -> None:
     try:
         client = await page.target.createCDPSession()
@@ -262,6 +275,7 @@ async def scrape_search(
                 await asyncio.sleep(args.retry_delay)
 
     if last_error is not None:
+        await _stop_proxy_auth(page, proxy)
         await browser.close()
         log.error("Search page permanently failed to load: %s", last_error)
         return [], False, True, 0, False, rp.STOP_NAVIGATION_FAILED
@@ -354,6 +368,7 @@ async def scrape_search(
     if args.dump_html:
         Path(_dump_path(args.out)).write_text(final_html, encoding="utf-8")
 
+    await _stop_proxy_auth(page, proxy)
     await browser.close()
     return merged, blocked, remote_api_error, rounds, shortfall, stop_reason
 

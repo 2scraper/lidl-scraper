@@ -9,6 +9,12 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-10-19
+
+### Fixed
+- A malformed proxy line was echoed in the error message, which can expose its password. The message now names the accepted formats instead.
+- pyppeteer turns proxy-auth request interception off before closing the browser. Answering a paused request while the target closes leaves pyppeteer's own inner future with an unretrieved "Target closed" error on stderr (seen live in tipranks-scraper). Verified live through an authenticated proxy: 10 rows, no such output.
+
 ## [0.4.3] — 2026-10-19
 
 ### Fixed
@@ -301,7 +307,8 @@ rather than being a silent violation of that.
   sku-diff logic is unchanged and unit-tested against two real
   `finish_run()` outputs in `smoke_test.py`.
 
-[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/2scraper/lidl-scraper/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/2scraper/lidl-scraper/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/2scraper/lidl-scraper/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/2scraper/lidl-scraper/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/2scraper/lidl-scraper/compare/v0.4.0...v0.4.1
