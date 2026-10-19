@@ -441,6 +441,16 @@ def _():
     assert c1 != c3
 
 
+@check("user_agent_from reads the live Fingerprint API shape (userAgent.userAgent, then navigator.userAgent)")
+def _():
+    import fingerprint_client as fc
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    assert fc.user_agent_from({"userAgent": {"userAgent": ua, "platform": "Windows"}}) == ua
+    assert fc.user_agent_from({"userAgent": {"platform": "Windows"}, "navigator": {"userAgent": ua}}) == ua
+    assert fc.user_agent_from({"userAgent": ua}) == ua
+    assert fc.user_agent_from({"id": 1}) is None
+
+
 _JSON_LD_PRODUCT_HTML = """
 <html><body>
 <script type="application/ld+json">

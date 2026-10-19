@@ -38,11 +38,18 @@ def fetch_fingerprint(
 
 
 def user_agent_from(fingerprint: dict) -> Optional[str]:
+    # Live-confirmed shape (2026-10-19): the UA string sits at
+    # `userAgent.userAgent` (next to its client hints), and again at
+    # `navigator.userAgent`. A string `userAgent` is accepted too.
     ua = fingerprint.get("userAgent")
     if isinstance(ua, dict):
-        return ua.get("value")
-    if isinstance(ua, str):
+        ua = ua.get("userAgent")
+    if isinstance(ua, str) and ua:
         return ua
+    nav = fingerprint.get("navigator")
+    if isinstance(nav, dict) and isinstance(nav.get("userAgent"), str) and nav["userAgent"]:
+        return nav["userAgent"]
+    log.warning("Fingerprint API profile carried no user agent — continuing without one.")
     return None
 
 

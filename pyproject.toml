@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lidl-scraper"
-version = "0.4.1"
+version = "0.4.2"
 description = "lidl.com grocery product scraper (Playwright, Selenium, Puppeteer, or 2Captcha's Scraping Browser API via CDP) — local-first, rendered product-grid parsing, captcha detection, proxies, fingerprints"
 readme = "README.md"
 requires-python = ">=3.9"
