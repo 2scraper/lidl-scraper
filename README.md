@@ -280,6 +280,10 @@ site):
 - **Selenium's `--proxy-server` cannot authenticate at all.** A `--proxy`
   with credentials has them stripped before reaching Chrome, with a loud
   warning — never a silent no-op.
+- **No engine can authenticate to a SOCKS proxy.** Chromium does not
+  support SOCKS authentication, so a `socks5://user:pass@…` proxy is
+  refused up front (exit 2). A SOCKS proxy without credentials works;
+  otherwise use the provider's HTTP endpoint.
 - **pyppeteer is effectively unmaintained** (its own README points at
   Playwright) — shipped for parity, not as a recommendation.
 - Install **exactly one** engine per environment — Playwright and

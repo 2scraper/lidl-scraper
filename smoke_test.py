@@ -304,6 +304,16 @@ def _():
         pass
 
 
+@check("proxy_pool rejects a credentialed SOCKS proxy as bad usage, without echoing the password")
+def _():
+    try:
+        proxy_pool.load_proxies("socks5://user:secretpass@host.example:1080", None)
+        raise AssertionError("expected ProxyParseError")
+    except proxy_pool.ProxyParseError as exc:
+        assert "secretpass" not in str(exc)
+    assert proxy_pool.load_proxies("socks5://host.example:1080", None)[0].scheme == "socks5"
+
+
 @check("proxy_pool parses a credentialed proxy and masks it in logs")
 def _():
     proxies = proxy_pool.load_proxies("http://user:secretpass@host.example:8080", None)
