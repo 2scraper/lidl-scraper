@@ -1,4 +1,4 @@
-# lidl-scraper
+# Lidl Scraper — US Grocery Prices and Unit Prices in Python
 
 ![release](https://img.shields.io/github/v/release/2scraper/lidl-scraper?sort=semver)
 ![tests](https://github.com/2scraper/lidl-scraper/actions/workflows/tests.yml/badge.svg)
@@ -7,6 +7,8 @@
 ![licence](https://img.shields.io/badge/licence-MIT-green)
 ![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20Puppeteer-informational)
 ![local-first](https://img.shields.io/badge/local--first-yes-success)
+
+**Lidl scraper** — an open-source (MIT) Python tool that reads lidl.com (Lidl US) search and category pages and writes grocery products with prices, unit prices and sizes to JSON or CSV. The default is a local headless Chromium with no proxy, key or account; live engine runs passed on 2026-10-18, and prices depend on the store you pick (confirmed the same day). Use it to track grocery prices by store, or to compare two runs with the bundled diff tool.
 
 lidl.com (Lidl US) grocery product scraper: a search term or a specials
 category in, a flat list of products out. Three engines (Playwright
@@ -338,6 +340,24 @@ driver import behind a module-level `try/except ImportError`).
 **Testing against the live site**: see [`TESTING.md`](TESTING.md). The primary
 Playwright path is live-verified; Selenium, pyppeteer, store binding, images,
 and discounted tiles remain the highest-value live checks.
+
+## Guides
+
+- [How to scrape Lidl: step-by-step guide](https://2captcha.com/h/how-to-scrape-lidl)
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [MediaMarkt scraper](https://github.com/2scraper/mediamarkt-scraper) — Category grids, search results and product pages from ten…
+- [Montblanc scraper](https://github.com/2scraper/montblanc-scraper) — Per-market prices, stock, collections and full variant…
+- [Pottery Barn scraper](https://github.com/2scraper/potterybarn-scraper) — Every product in a Pottery Barn category, and every SKU's…
+- [Rakuten Ichiba scraper](https://github.com/2scraper/rakuten-scraper) — Japan's largest marketplace
+- [SHEIN scraper](https://github.com/2scraper/shein-scraper) — us.shein.com search, category and product pages…
+- [Sleep Number scraper](https://github.com/2scraper/sleepnumber-scraper) — Smart beds, mattresses and bedding from sleepnumber.com
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## License
 
