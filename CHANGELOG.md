@@ -9,6 +9,9 @@ rather than being a silent violation of that.
 
 ## [Unreleased]
 
+### Changed
+- README "Local-first" now records a dated live measurement of the no-proxy, no-key default (2026-11-05: complete runs from a Helsinki datacentre server and a GitHub Actions runner, no bot challenge) instead of saying the access conditions were never measured on this site.
+
 ## [0.4.4] — 2026-10-19
 
 ### Fixed
