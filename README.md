@@ -92,9 +92,23 @@ Like the rest of the family, this does **not** require 2Captcha's paid
 Scraping Browser API to run. The default is an ordinary local headless
 Chromium, no proxy, no key, no account. `--proxy` / `--cdp-endpoint` /
 `--fingerprint` are opt-in power options for volume, a specific exit
-country, or a consistent device identity — the same reasoning the rest of
-the family states, carried over here as an architectural choice even
-though (see above) it hasn't been live-measured on *this* site yet.
+country, or a consistent device identity.
+
+**Measured 2026-11-05 at commit `4dbec6d`**, Playwright engine, no proxy, no
+key, no account, `--query "whole milk"` (or `"milk"`), first result batches:
+
+| Where the run came from | Exit | Result |
+|---|---|---|
+| A datacentre server (Hetzner, Helsinki) | 0 | `complete`, 20 products in 3 rounds, all prices confirmed |
+| A GitHub-hosted Actions runner (the `canary-local` job) | 0 | `complete`, 30 products in 5 rounds |
+| For comparison: a US residential proxy (`--proxy`) | 0 | `complete`, 20 products in 3 rounds |
+
+No bot challenge appeared on any of them. Datacentre addresses are the kind
+sites refuse most often, so a home connection was not measured separately.
+One earlier scheduled canary (2026-11-02, GitHub runner) got lidl.com's home
+page instead of the search results and exited 4; the next manual run from
+the same kind of runner passed. If a search comes back empty, re-run it
+with `--dump-html` before reading it as a real zero.
 
 ## Install
 
