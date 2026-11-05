@@ -2,7 +2,7 @@ name: canary
 
 on:
   schedule:
-    - cron: "37 6 * * 1"   # weekly, Mondays; avoid :00 so it doesn't pile up with everyone else's
+    - cron: "7 8 * * 1"   # weekly, Mondays; avoid :00 so it doesn't pile up with everyone else's
   workflow_dispatch: {}     # dispatch manually at least once before trusting the badge
 
 jobs:

@@ -10,6 +10,8 @@ rather than being a silent violation of that.
 ## [Unreleased]
 
 ### Changed
+
+- CI only: the scheduled canary now starts at 08:07 UTC (Mondays) instead of 06:37, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
 - README "Local-first" now records a dated live measurement of the no-proxy, no-key default (2026-11-05: complete runs from a Helsinki datacentre server and a GitHub Actions runner, no bot challenge) instead of saying the access conditions were never measured on this site.
 
 ## [0.4.4] — 2026-10-19
