@@ -17,6 +17,184 @@ an open, documented `Product` schema. Part of the
 [2scraper](https://github.com/2scraper) family — same output contract,
 exit codes, and family modules as `stockx-scraper` / `skyscanner-scraper`.
 
+## Example output
+
+Both records of [`sample_output.json`](sample_output.json), trimmed from the
+live Playwright run of 2026-09-20 — every column, in the output's order:
+
+```json
+[
+  {
+    "sku": "lidl-11675058",
+    "source": "lidl.com",
+    "category": "Food",
+    "title": "whole milk",
+    "brand": null,
+    "price": 3.3,
+    "currency": "USD",
+    "price_source": "dom",
+    "product_url": "https://www.lidl.com/p/whole-milk/p11675058",
+    "image_url": null,
+    "scraped_at": "2026-09-20T13:13:11Z",
+    "unit_price": 0.03,
+    "unit_price_per": "fl.oz.",
+    "unit_size": "128 fl.oz.",
+    "original_price": null,
+    "discount_pct": null,
+    "is_weekly_deal": null,
+    "lidl_plus_price": null,
+    "deal_valid_from": null,
+    "deal_valid_until": null,
+    "store_id": null,
+    "zip_code": null
+  },
+  {
+    "sku": "lidl-11242918",
+    "source": "lidl.com",
+    "category": "Food",
+    "title": "Lactaid® whole milk",
+    "brand": "LACTAID®",
+    "price": 6.38,
+    "currency": "USD",
+    "price_source": "dom",
+    "product_url": "https://www.lidl.com/p/lactaid-whole-milk/p11242918",
+    "image_url": null,
+    "scraped_at": "2026-09-20T13:13:11Z",
+    "unit_price": 0.07,
+    "unit_price_per": "fl.oz.",
+    "unit_size": "96 fl.oz.",
+    "original_price": null,
+    "discount_pct": null,
+    "is_weekly_deal": null,
+    "lidl_plus_price": null,
+    "deal_valid_from": null,
+    "deal_valid_until": null,
+    "store_id": null,
+    "zip_code": null
+  }
+]
+```
+
+Full sample: [`sample_output.json`](sample_output.json) · 2 rows, collected
+2026-09-20 (a `--query` search, no store picked).
+
+`unit_price` is per `unit_price_per` (here per fluid ounce); with a store
+picked, the price, the unit and `store_id`/`zip_code` change — see
+[Coverage and limitations](#coverage-and-limitations).
+
+## Requirements and access
+
+| | |
+|---|---|
+| Runtime | Python 3.9 or newer (the offline suite runs on 3.9 and 3.12 in CI); Playwright with its Chromium (primary); Selenium (needs a matching chromedriver) or pyppeteer as alternatives, one per virtualenv |
+| Coverage | lidl.com (Lidl US, prices in USD): searches, aisle and weekly-deals listings, product pages. Prices are per store: `--store-id` or `--zip` picks one; without it the site's default prices are returned. See [Coverage and limitations](#coverage-and-limitations) |
+| Required for the documented scenario | **Nothing.** No key, no proxy, no account, no `.env` |
+| Optional: a proxy | For volume or a specific exit country (`LIDL_PROXY`). A US residential proxy gave the same result as no proxy on 2026-11-05 |
+| Optional: 2Captcha Scraping Browser API | No local browser (`LIDL_CDP_ENDPOINT`, Playwright and pyppeteer); ran live on 2026-10-18. A profile serves one session at a time |
+| Optional: fingerprint | `--fingerprint` applies only the user agent of a 2Captcha Fingerprint API profile |
+| Captcha solving | Not needed: no bot challenge was met in any measured run, and the local engines never buy a solve |
+| Measured | 2026-11-18 at commit `c67ce71`, Hetzner datacentre address, no proxy, key or account; first on 2026-11-05 at `4dbec6d` from a datacentre server, a GitHub runner and a US residential proxy. See [Verification](#verification) |
+
+## Quick start
+
+```bash
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements-playwright.txt
+playwright install chromium
+
+python3 playwright_scraper.py --query "whole milk" --max-results 20
+```
+
+No key, no proxy, no account, no `.env`. Add `--store-id US01449` or
+`--zip 07086` to price the run at one store.
+
+It writes two files to the current directory (`--out` names the output,
+`--format csv` writes CSV instead of JSON):
+
+* `lidl_results.json` — one row per product;
+* `lidl_results.json.meta.json` — `status`, `stop_reason`, scroll rounds,
+  failed pages and the share of rows with a confirmed price.
+
+If the run does not end with exit 0:
+
+* **exit 3, blocked** — no lidl.com block page has been seen yet, so save
+  the page with `--dump-html` and see [Known limitations](#known-limitations).
+* **exit 4, zero products** — the page says nothing about products existing.
+  Some stores answer every search with "no match"; one scheduled run got
+  lidl.com's home page instead. Re-run with `--dump-html` before reading it
+  as a real zero.
+* **exit 5 or 6, not obtained or partial** — 5: the page never loaded, the
+  store API was unreachable, or the page counted products the parser did not
+  recognise; 6: rows were collected and then the grid came up short. See
+  [Output contract](#output-contract).
+
+Setup, `.env` and exit codes for the whole family:
+[How to run the 2scraper scrapers](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers).
+
+## Coverage and limitations
+
+The short version: searches, aisle and weekly-deals listings and product
+pages on lidl.com (Lidl US); one scroll-based grid per run, capped with
+`--max-results`; prices per store; no deal dates.
+
+### Known limitations
+
+
+- **No site-specific block-page marker exists.** `lidl_parser.
+  BOT_CHALLENGE_MARKERS` is deliberately empty — detection still runs via
+  `captcha_solver.GENERIC_BOT_CHALLENGE_MARKERS` (Cloudflare/reCAPTCHA/
+  another captcha vendor's widget/PerimeterX/DataDome wording), but nothing specific to how
+  lidl.com's own block page (if one exists) reads has been captured yet.
+  If you hit one, `TESTING.md` explains how to add it.
+- **This repo does not implement captcha token injection on a locally
+  launched browser**, so the local engines never BUY a solve: a challenge
+  is detected and reported (the run ends blocked, exit 3), and no 2Captcha
+  task is created, because a token nothing puts into the page cannot clear
+  it. Over `--cdp-endpoint` (the Scraping Browser API) the remote browser's
+  own `Captcha.setAutoSolve` solves inside its own infrastructure, which is
+  unaffected. If injection is added later, each page still gets at most one
+  paid solve (`captcha_solver.SOLVES_PER_PAGE`), shared by every scroll
+  round.
+- **Some stores answer every search with "no match".** On 2026-10-18,
+  US01575 (New York 10001) made a search for whole milk return a 404 with
+  Lidl's no-match page. Such a run ends empty (exit 4), not blocked. The
+  same page, without a store, can also show a handful of unrelated
+  products under its no-match message; those are never returned as
+  results.
+- **`unit_price` is quoted per the store's unit.** `unit_price_per` names
+  it: the same gallon is `0.03` per `fl.oz.` with no store and `1.06` per
+  `qt.` at US01449, so compare unit prices only where the units match.
+- **Deal dates are not filled.** Images, `original_price`, `discount_pct`
+  and `is_weekly_deal` come from confirmed tile markup, but no tile states
+  a deal's validity dates, so `deal_valid_from`/`deal_valid_until` stay
+  null on listings. Deals pages print date ranges, but mostly in teasers
+  for other pages, and a tile on the week-42 page can carry an "In stores
+  starting 10/28" badge, so a page's week is not its tiles' validity. `price` is what a shopper without the Lidl Plus app
+  pays; a member price goes to `lidl_plus_price`, and on those tiles
+  `unit_price` is null because Lidl prints only the member per-unit price.
+
+## Examples
+
+- [How to scrape Lidl: step-by-step guide](https://2captcha.com/h/how-to-scrape-lidl)
+- [Lidl scraper on 2scraper.com](https://2scraper.com/scrapers/lidl-scraper/) — what it collects, requirements and related scrapers on one page.
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+
+Commands for a store, a sort order, an aisle, a deals page and a product page
+are under [Usage](#usage).
+
+## Verification
+
+| Date, commit | Check | Conditions | Result |
+|---|---|---|---|
+| 2026-11-18, `c67ce71` | Quick start install | a fresh virtualenv, Python 3.13, `requirements-playwright.txt` (Playwright 1.65.2) | installs; every flag in the Quick start and Usage commands is in `--help` |
+| 2026-11-18, `c67ce71` | Quick start, as written above | headless Playwright, no proxy, no key, no account, no `.env`, one Hetzner datacentre address | **20 rows**, 20 unique `sku`, `status: complete` (`stop_reason: max_results`), 3 scroll rounds, exit 0; `price` (USD) and `unit_price` on 20 of 20; no bot challenge; the same 22 columns in the same order as `sample_output.json` |
+| 2026-11-18, `c67ce71` | The same with `--store-id US01449` | the same | 20 rows priced at US01449 (Weehawken 07086), `complete`, exit 0; 5 of the same 20 `sku` priced differently from the run without a store (e.g. $3.61 → $4.40), and `unit_price_per` in `qt.` instead of `fl.oz.` |
+| 2026-11-18, `c67ce71` | Offline suite | `python3 smoke_test.py`, core requirements only | passed |
+| 2026-11-05, `4dbec6d` | Access without a key or proxy | a datacentre server, a GitHub runner, a US residential proxy | `complete`, exit 0 on all three (see [Local-first](#local-first)) |
+| 2026-10-18 | All three engines and every feature | store selection, sorting, aisle listings, product pages, the Scraping Browser path | passed (see [Read this before trusting a run](#read-this-before-trusting-a-run)) |
+| 2026-10-19 to 2026-11-16 | [Canary](https://github.com/2scraper/lidl-scraper/actions/workflows/canary.yml), weekly | `canary-local`: a GitHub runner, no proxy, no key. `canary-cdp`: the Scraping Browser API | `canary-local` green on every run except 2026-11-02 (it got lidl.com's home page, exit 4), the last on 2026-11-16 at `c67ce71`. `canary-cdp` red since 2026-10-26: the Scraping Browser API refuses the login stored in the `LIDL_CDP_ENDPOINT` secret (`deny_no_user`) — a credential, not the site |
+
 ## Read this before trusting a run
 
 **Updated 2026-09-20 from a real, browser-rendered capture** (a real
@@ -102,6 +280,12 @@ key, no account, `--query "whole milk"` (or `"milk"`), first result batches:
 | A datacentre server (Hetzner, Helsinki) | 0 | `complete`, 20 products in 3 rounds, all prices confirmed |
 | A GitHub-hosted Actions runner (the `canary-local` job) | 0 | `complete`, 30 products in 5 rounds |
 | For comparison: a US residential proxy (`--proxy`) | 0 | `complete`, 20 products in 3 rounds |
+
+Re-measured **2026-11-18 at commit `c67ce71`** from a Hetzner datacentre
+address, Playwright, no proxy, no key, no account, no `.env`:
+`--query "whole milk" --max-results 20` gave `complete`, 20 products in 3
+rounds, exit 0; the same with `--store-id US01449` also exit 0 (see
+[Verification](#verification)).
 
 No bot challenge appeared on any of them. Datacentre addresses are the kind
 sites refuse most often, so a home connection was not measured separately.
@@ -193,13 +377,9 @@ grid. `--max-scrolls` defaults to `max(20, --max-results / 4 + 10)`.
 - **`--pages`**: lidl.com's search/specials pages are treated as a single
   scroll-based results page here (see "Pagination" below), the same
   structural reason skyscanner-scraper omits it — `--max-scrolls`/
-  `--stall-rounds` are this repo's actual equivalent. Unlike
-  skyscanner-scraper, this is a documented ASSUMPTION about lidl.com's
-  real UI, not a confirmed fact — if a live capture shows lidl.com
-  actually uses `?page=N` pagination instead, `--pages` belongs back in a
-  future revision, and the scroll loop degrades safely in the meantime
-  (it just stalls after the first page, per `--stall-rounds`, rather than
-  crashing or hanging).
+  `--stall-rounds` are this repo's actual equivalent. The batched grid and
+  its `View More Products` control are live-verified (see
+  [Pagination](#pagination)).
 - **`--concurrency` / `--proxy-rotate`**: same reasoning as
   skyscanner-scraper — a single scroll-based page has no independently-
   addressable units to parallelize or rotate an exit between.
@@ -307,41 +487,6 @@ site):
   collides with Selenium's `urllib3` pin. Use a venv per engine, same as
   `.github/workflows/tests.yml`'s `engine-smoke` job.
 
-## Known limitations
-
-- **No site-specific block-page marker exists.** `lidl_parser.
-  BOT_CHALLENGE_MARKERS` is deliberately empty — detection still runs via
-  `captcha_solver.GENERIC_BOT_CHALLENGE_MARKERS` (Cloudflare/reCAPTCHA/
-  hCaptcha/PerimeterX/DataDome wording), but nothing specific to how
-  lidl.com's own block page (if one exists) reads has been captured yet.
-  If you hit one, `TESTING.md` explains how to add it.
-- **This repo does not implement captcha token injection on a locally
-  launched browser**, so the local engines never BUY a solve: a challenge
-  is detected and reported (the run ends blocked, exit 3), and no 2Captcha
-  task is created, because a token nothing puts into the page cannot clear
-  it. Over `--cdp-endpoint` (the Scraping Browser API) the remote browser's
-  own `Captcha.setAutoSolve` solves inside its own infrastructure, which is
-  unaffected. If injection is added later, each page still gets at most one
-  paid solve (`captcha_solver.SOLVES_PER_PAGE`), shared by every scroll
-  round.
-- **Some stores answer every search with "no match".** On 2026-10-18,
-  US01575 (New York 10001) made a search for whole milk return a 404 with
-  Lidl's no-match page. Such a run ends empty (exit 4), not blocked. The
-  same page, without a store, can also show a handful of unrelated
-  products under its no-match message; those are never returned as
-  results.
-- **`unit_price` is quoted per the store's unit.** `unit_price_per` names
-  it: the same gallon is `0.03` per `fl.oz.` with no store and `1.06` per
-  `qt.` at US01449, so compare unit prices only where the units match.
-- **Deal dates are not filled.** Images, `original_price`, `discount_pct`
-  and `is_weekly_deal` come from confirmed tile markup, but no tile states
-  a deal's validity dates, so `deal_valid_from`/`deal_valid_until` stay
-  null on listings. Deals pages print date ranges, but mostly in teasers
-  for other pages, and a tile on the week-42 page can carry an "In stores
-  starting 10/28" badge, so a page's week is not its tiles' validity. `price` is what a shopper without the Lidl Plus app
-  pays; a member price goes to `lidl_plus_price`, and on those tiles
-  `unit_price` is null because Lidl prints only the member per-unit price.
-
 ## Development
 
 ```bash
@@ -351,14 +496,72 @@ python3 smoke_test.py     # or: pytest tests/test_smoke.py
 Passes with **no** engine library installed at all (each engine guards its
 driver import behind a module-level `try/except ImportError`).
 
-**Testing against the live site**: see [`TESTING.md`](TESTING.md). The primary
-Playwright path is live-verified; Selenium, pyppeteer, store binding, images,
-and discounted tiles remain the highest-value live checks.
+**Testing against the live site**: see [`TESTING.md`](TESTING.md). All three
+engines, store binding, images and discounted tiles ran live on 2026-10-18
+(see [Read this before trusting a run](#read-this-before-trusting-a-run));
+`TESTING.md` records what is still unverified.
 
-## Guides
+## FAQ
 
-- [How to scrape Lidl: step-by-step guide](https://2captcha.com/h/how-to-scrape-lidl)
-- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+### Does Lidl have a public API?
+
+This repository does not use a product API. It reads the search and listing
+tiles' own `data-gridbox-impression` JSON in a real browser, and a product
+page's schema.org `Product` block. Picking a store calls Lidl's store API
+with the public key the site's own store search sends, read from the site at
+run time.
+
+### Is it legal to scrape lidl.com?
+
+This is not legal advice. Scraping public pages is permitted in many
+jurisdictions, but lidl.com's terms of use, copyright in product texts and
+images, and data-protection law differ between countries. The output is
+product and price data from public pages, and the scraper does not log in.
+Keep the request rate low and do not collect personal data without a lawful
+basis.
+
+### Why does Lidl block headless browsers or datacentre IPs?
+
+It did not in any measured run, and no key or proxy is needed: headless
+Playwright from a Hetzner datacentre address returned complete runs on
+2026-11-05 and 2026-11-18, and so did a GitHub runner. No bot challenge
+appeared, and no lidl.com block page has been captured yet. If a search
+comes back empty, re-run it with `--dump-html` before reading it as a real
+zero.
+
+### How do I run the Lidl scraper on a server?
+
+Exactly as in the [Quick start](#quick-start): headless is the default, and
+no display, key, proxy or `.env` is needed. The `canary-local` job runs a
+search weekly on a GitHub runner that way. For a scheduled job, branch on
+the exit code and on `status` in the `.meta.json` sidecar.
+
+### What fields does the scraper return?
+
+22 columns per product, in the same order in JSON and CSV: `sku`, `source`,
+`category`, `title`, `brand`, `price`, `currency`, `price_source`,
+`product_url`, `image_url`, `scraped_at`, `unit_price`, `unit_price_per`,
+`unit_size`, `original_price`, `discount_pct`, `is_weekly_deal`,
+`lidl_plus_price`, `deal_valid_from`, `deal_valid_until`, `store_id`,
+`zip_code`. See [Output contract](#output-contract).
+
+### Can I get prices for a specific Lidl store?
+
+Yes: `--store-id US01449` (or `1449`), or `--zip 07086` for the store in that
+zip or the closest one sharing its first three digits. Prices depend on the
+store — on 2026-10-18 the same gallon of whole milk read $4.25 in Weehawken
+NJ, $5.09 in Philadelphia and $2.57 in Charlotte against $3.48 with no
+store — and `unit_price_per` can change with it, so compare unit prices only
+where the units match. Every row records the store actually used.
+
+### How often does it break when lidl.com changes?
+
+A weekly canary runs a real search from a GitHub runner with no key or
+proxy; it has been green every week since 2026-10-19 except one run that got
+the home page instead of results (2026-11-02). The canary's separate
+Scraping Browser job is red because its stored login is refused, not
+because of the site. Fixes
+are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Related scrapers
 
@@ -367,7 +570,7 @@ Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.m
 - [MediaMarkt scraper](https://github.com/2scraper/mediamarkt-scraper) — Category grids, search results and product pages from ten…
 - [Montblanc scraper](https://github.com/2scraper/montblanc-scraper) — Per-market prices, stock, collections and full variant…
 - [Pottery Barn scraper](https://github.com/2scraper/potterybarn-scraper) — Every product in a Pottery Barn category, and every SKU's…
-- [Rakuten Ichiba scraper](https://github.com/2scraper/rakuten-scraper) — Japan's largest marketplace
+- [Rakuten scraper](https://github.com/2scraper/rakuten-scraper) — Ichiba (rakuten.co.jp), Japan's main domestic marketplace
 - [SHEIN scraper](https://github.com/2scraper/shein-scraper) — us.shein.com search, category and product pages…
 - [Sleep Number scraper](https://github.com/2scraper/sleepnumber-scraper) — Smart beds, mattresses and bedding from sleepnumber.com
 
