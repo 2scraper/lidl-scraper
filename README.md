@@ -143,7 +143,7 @@ pages on lidl.com (Lidl US); one scroll-based grid per run, capped with
 - **No site-specific block-page marker exists.** `lidl_parser.
   BOT_CHALLENGE_MARKERS` is deliberately empty — detection still runs via
   `captcha_solver.GENERIC_BOT_CHALLENGE_MARKERS` (Cloudflare/reCAPTCHA/
-  hCaptcha/PerimeterX/DataDome wording), but nothing specific to how
+  another captcha vendor's widget/PerimeterX/DataDome wording), but nothing specific to how
   lidl.com's own block page (if one exists) reads has been captured yet.
   If you hit one, `TESTING.md` explains how to add it.
 - **This repo does not implement captcha token injection on a locally
