@@ -7,7 +7,10 @@ on:
 jobs:
   offline:
     name: offline checks (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: since ubuntu-latest moved to 26.04,
+    # actions/setup-python has no Python 3.9 build for it, and 3.9 is
+    # the floor pyproject.toml promises (requires-python >=3.9).
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         python-version: ["3.9", "3.12"]
