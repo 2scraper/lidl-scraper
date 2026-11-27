@@ -11,6 +11,8 @@ rather than being a silent violation of that.
 
 ### Changed
 
+- CI only: the offline-checks job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which moved to Ubuntu 26.04, where `actions/setup-python` has no Python 3.9 build. 3.9 stays the supported floor.
+- Docker: the image installs `libatomic1` before Playwright. Recent Playwright releases' Node driver needs it to run `playwright install` at all, and the slim base image does not ship it, so the image build failed.
 - CI only: the scheduled canary now starts at 08:07 UTC (Mondays) instead of 06:37, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
 - README "Local-first" now records a dated live measurement of the no-proxy, no-key default (2026-11-05: complete runs from a Helsinki datacentre server and a GitHub Actions runner, no bot challenge) instead of saying the access conditions were never measured on this site.
 
